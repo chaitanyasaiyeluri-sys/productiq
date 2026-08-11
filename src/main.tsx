@@ -2,6 +2,7 @@ import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
 import { AppShell } from "@/components/AppShell";
+import { RequireAuth } from "@/components/RequireAuth";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
@@ -131,41 +132,51 @@ createRoot(document.getElementById("root")!).render(
               <Route
                 path="/dashboard"
                 element={
-                  <AppShell>
-                    <Dashboard />
-                  </AppShell>
+                  <RequireAuth>
+                    <AppShell>
+                      <Dashboard />
+                    </AppShell>
+                  </RequireAuth>
                 }
               />
               <Route
                 path="/add"
                 element={
-                  <AppShell>
-                    <AddProduct />
-                  </AppShell>
+                  <RequireAuth>
+                    <AppShell>
+                      <AddProduct />
+                    </AppShell>
+                  </RequireAuth>
                 }
               />
               <Route
                 path="/processing/:jobId"
                 element={
-                  <AppShell>
-                    <Processing />
-                  </AppShell>
+                  <RequireAuth>
+                    <AppShell>
+                      <Processing />
+                    </AppShell>
+                  </RequireAuth>
                 }
               />
               <Route
                 path="/products/:productId"
                 element={
-                  <AppShell>
-                    <ProductDetail />
-                  </AppShell>
+                  <RequireAuth>
+                    <AppShell>
+                      <ProductDetail />
+                    </AppShell>
+                  </RequireAuth>
                 }
               />
               <Route
                 path="/validation"
                 element={
-                  <AppShell>
-                    <ValidationCenter />
-                  </AppShell>
+                  <RequireAuth>
+                    <AppShell>
+                      <ValidationCenter />
+                    </AppShell>
+                  </RequireAuth>
                 }
               />
               <Route path="*" element={<NotFound />} />

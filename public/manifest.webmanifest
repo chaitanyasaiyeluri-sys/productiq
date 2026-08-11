@@ -1,7 +1,7 @@
 {
-  "name": "freebuff.com application",
-  "short_name": "freebuff.com",
-  "description": "freebuff.com application",
+  "name": "ProductIQ",
+  "short_name": "ProductIQ",
+  "description": "AI-powered product intelligence for industrial commerce.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

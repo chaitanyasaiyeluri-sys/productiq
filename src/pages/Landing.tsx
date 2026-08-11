@@ -12,6 +12,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { Link } from "react-router";
+import { useAuth } from "@/hooks/use-auth";
 import { SourceBadge, StatusBadge, ConfidenceBar } from "@/components/product-bits";
 
 const fadeUp = {
@@ -118,6 +119,9 @@ function MockProductCard() {
 }
 
 export default function Landing() {
+  const { isAuthenticated } = useAuth();
+  const demoHref = isAuthenticated ? "/dashboard" : "/auth?returnTo=%2Fdashboard";
+
   return (
     <div className="min-h-screen bg-background">
       {/* ---------- Nav ---------- */}
@@ -144,10 +148,10 @@ export default function Landing() {
               Sign in
             </Link>
             <Link
-              to="/dashboard"
+              to={demoHref}
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground shadow-lg shadow-primary/25 transition-colors hover:bg-primary/90"
             >
-              Open the demo
+              {isAuthenticated ? "Dashboard" : "Open the demo"}
               <ArrowRight className="size-3.5" />
             </Link>
           </div>
@@ -179,16 +183,17 @@ export default function Landing() {
                 <span className="text-sky-400">you can trust</span>.
               </h1>
               <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-white/60">
-                ProductIQ ingests raw, incomplete industrial product information and returns
-                structured, enriched, validated, and commerce-ready records — with every field
-                labeled by source, confidence, and evidence.
+                ProductIQ helps manufacturers, distributors, and catalog teams turn raw,
+                incomplete industrial product information into structured, validated, and
+                commerce-ready records — with every field labeled by source, confidence, and
+                evidence.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link
-                  to="/dashboard"
+                  to={demoHref}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xl shadow-primary/30 transition-all hover:bg-primary/90"
                 >
-                  Open the live demo
+                  {isAuthenticated ? "Open the dashboard" : "Open the live demo"}
                   <ArrowRight className="size-4" />
                 </Link>
                 <a
