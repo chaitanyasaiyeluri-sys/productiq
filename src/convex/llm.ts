@@ -65,11 +65,13 @@ export async function callLlmForJson(
           model,
           input: userPrompt,
           system_instruction: systemPrompt,
+          // Plain JSON mode (no schema): pinning a schema here can make the
+          // model "comply" by returning an empty object, which fails the
+          // ProductIQ schema validation downstream.
           response_format: [
             {
               type: "text",
               mime_type: "application/json",
-              schema: { type: "object" },
             },
           ],
           generation_config: {
@@ -130,12 +132,13 @@ export async function callLlmForJson(
         content?: { type?: string; text?: string }[];
       }[];
     };
-    // The final answer lives in the model_output steps of the interaction
-    // timeline; join any text items from them in order.
+    // The final answer is the last model_output step of the interaction
+    // timeline; join its text items in order. Earlier steps can carry
+    // thoughts or intermediate text that would corrupt the JSON.
+    const outputSteps =
+      data.steps?.filter((step) => step.type === "model_output") ?? [];
     const content =
-      data.steps
-        ?.filter((step) => step.type === "model_output")
-        .flatMap((step) => step.content ?? [])
+      (outputSteps[outputSteps.length - 1]?.content ?? [])
         .filter((item) => item.type === "text")
         .map((item) => item.text ?? "")
         .join("")
