@@ -34,7 +34,7 @@ export function displayValue(
 export const ERROR_GUIDANCE: Record<string, { title: string; hint: string }> = {
   missing_api_key: {
     title: "API key not configured",
-    hint: "Add an OPENAI_API_KEY in the project's Keys/API keys tab, then retry the pipeline. No data was saved.",
+    hint: "Add a GEMINI_API_KEY in the project's Keys/API keys tab, then retry the pipeline. No data was saved.",
   },
   llm_api_error: {
     title: "Language model request failed",
@@ -42,7 +42,7 @@ export const ERROR_GUIDANCE: Record<string, { title: string; hint: string }> = {
   },
   llm_timeout: {
     title: "Language model timed out",
-    hint: "The request took longer than 60 seconds. Retry — no data was saved.",
+    hint: "The request took longer than 90 seconds. Retry — no data was saved.",
   },
   invalid_llm_json: {
     title: "Invalid model output",

@@ -153,7 +153,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="min-w-0">
               <p className="text-xs font-medium text-sidebar-foreground">Live AI pipeline</p>
               <p className="truncate text-[11px] text-sidebar-foreground/60">
-                OpenAI-compatible endpoint
+                Gemini 3.6 Flash
               </p>
             </div>
           </div>
