@@ -1,12 +1,13 @@
 /**
  * LLM client for the ProductIQ pipeline.
  *
- * Talks to any OpenAI-compatible chat completions endpoint with JSON output
- * mode enabled. By default this is OpenAI (api.openai.com/v1, gpt-4o-mini);
- * the endpoint and model can be overridden through LLM_BASE_URL and LLM_MODEL
- * so a stronger or cheaper model can be swapped in later without code changes.
+ * Talks to Google Gemini's generateContent API with JSON response mode
+ * enabled. By default this is Gemini (generativelanguage.googleapis.com,
+ * gemini-2.5-flash); the endpoint and model can be overridden through
+ * GEMINI_BASE_URL and LLM_MODEL so a stronger or cheaper model can be swapped
+ * in later without code changes.
  *
- * The API key is read from process.env.OPENAI_API_KEY, which is injected by
+ * The API key is read from process.env.GEMINI_API_KEY, which is injected by
  * the Freebuff Keys UI into the Convex runtime.
  */
 
@@ -18,8 +19,8 @@ export class LlmError extends Error {
   }
 }
 
-const DEFAULT_BASE_URL = "https://api.openai.com/v1";
-const DEFAULT_MODEL = "gpt-4o-mini";
+const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 interface LlmResult {
@@ -35,15 +36,15 @@ export async function callLlmForJson(
   systemPrompt: string,
   userPrompt: string,
 ): Promise<LlmResult> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.trim() === "") {
     throw new LlmError(
       "missing_api_key",
-      "The LLM API key is not configured. Add OPENAI_API_KEY in the project's Keys/API keys tab, then run the pipeline again.",
+      "The Gemini API key is not configured. Add GEMINI_API_KEY in the project's Keys/API keys tab, then run the pipeline again.",
     );
   }
 
-  const baseUrl = (process.env.LLM_BASE_URL ?? DEFAULT_BASE_URL).replace(
+  const baseUrl = (process.env.GEMINI_BASE_URL ?? DEFAULT_BASE_URL).replace(
     /\/+$/,
     "",
   );
@@ -54,21 +55,27 @@ export async function callLlmForJson(
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
+      response = await fetch(`${baseUrl}/models/${model}:generateContent`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          "x-goog-api-key": apiKey,
         },
         body: JSON.stringify({
-          model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: userPrompt }],
+            },
           ],
-          temperature: 0.2,
-          max_tokens: 4096,
-          response_format: { type: "json_object" },
+          systemInstruction: {
+            parts: [{ text: systemPrompt }],
+          },
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 4096,
+            responseMimeType: "application/json",
+          },
         }),
         signal: controller.signal,
       });
@@ -90,7 +97,9 @@ export async function callLlmForJson(
     if (!response.ok) {
       let detail = "";
       try {
-        const body = (await response.json()) as { error?: { message?: string } };
+        const body = (await response.json()) as {
+          error?: { message?: string; status?: string };
+        };
         detail = body.error?.message ?? "";
       } catch {
         // ignore body parsing failures
@@ -104,7 +113,7 @@ export async function callLlmForJson(
         status === 403;
       const message =
         detail ||
-        `The language model API returned HTTP ${status}.`;
+        `The Gemini API returned HTTP ${status}.`;
       throw new LlmError(
         retriable ? "llm_api_error" : "llm_api_error",
         message,
@@ -112,17 +121,22 @@ export async function callLlmForJson(
     }
 
     const data = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-      model?: string;
+      candidates?: {
+        content?: { parts?: { text?: string }[] };
+      }[];
+      modelVersion?: string;
     };
-    const content = data.choices?.[0]?.message?.content;
+    const content =
+      data.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text ?? "")
+        .join("") ?? "";
     if (typeof content !== "string" || content.trim() === "") {
       throw new LlmError(
         "invalid_llm_json",
         "The language model returned an empty response.",
       );
     }
-    return { content, model: data.model ?? model };
+    return { content, model: data.modelVersion ?? model };
   };
 
   // One retry for transient network failures (5xx / 429 / connection errors).

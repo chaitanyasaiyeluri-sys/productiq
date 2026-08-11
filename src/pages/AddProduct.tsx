@@ -315,7 +315,7 @@ export default function AddProduct() {
       <div className="flex items-center justify-between gap-4">
         <p className="max-w-sm text-[12px] leading-relaxed text-zinc-400">
           <Sparkles className="mr-1 inline size-3.5 text-primary" />
-          Requires an <span className="font-medium text-zinc-500">OPENAI_API_KEY</span> in the
+          Requires a <span className="font-medium text-zinc-500">GEMINI_API_KEY</span> in the
           project's Keys tab. Every stage of the pipeline is shown live — nothing is simulated.
         </p>
         <Button

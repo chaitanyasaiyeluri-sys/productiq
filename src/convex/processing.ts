@@ -7,9 +7,9 @@
  *   Raw input → Extract → Enrich → Validate → Commerce → Score → Save
  *
  * The MVP performs the extraction/enrichment/commerce generation in a single
- * real LLM call (OpenAI-compatible chat completions with JSON mode), but the
- * job model exposes every stage separately so the UI can animate the pipeline
- * and surface per-stage state, progress, and errors.
+ * real LLM call (Google Gemini generateContent with JSON response mode), but
+ * the job model exposes every stage separately so the UI can animate the
+ * pipeline and surface per-stage state, progress, and errors.
  *
  * Reliability contract: the LLM reply is parsed and validated against a strict
  * zod schema before anything is saved. On any failure the job is marked
