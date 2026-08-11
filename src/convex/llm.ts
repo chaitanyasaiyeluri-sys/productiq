@@ -1,11 +1,11 @@
 /**
  * LLM client for the ProductIQ pipeline.
  *
- * Talks to Google Gemini's generateContent API with JSON response mode
- * enabled. By default this is Gemini (generativelanguage.googleapis.com,
- * gemini-2.5-flash); the endpoint and model can be overridden through
- * GEMINI_BASE_URL and LLM_MODEL so a stronger or cheaper model can be swapped
- * in later without code changes.
+ * Talks to Google Gemini's Interactions API (POST /v1beta/interactions) with
+ * JSON response format enabled. By default this uses gemini-3.6-flash, the
+ * current generation of the Flash line; the endpoint and model can be
+ * overridden through GEMINI_BASE_URL and LLM_MODEL so a stronger or cheaper
+ * model can be swapped in later without code changes.
  *
  * The API key is read from process.env.GEMINI_API_KEY, which is injected by
  * the Freebuff Keys UI into the Convex runtime.
@@ -20,8 +20,8 @@ export class LlmError extends Error {
 }
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL = "gemini-2.5-flash";
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_MODEL = "gemini-3.6-flash";
+const DEFAULT_TIMEOUT_MS = 90_000;
 
 interface LlmResult {
   content: string;
@@ -55,27 +55,30 @@ export async function callLlmForJson(
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
     let response: Response;
     try {
-      response = await fetch(`${baseUrl}/models/${model}:generateContent`, {
+      response = await fetch(`${baseUrl}/interactions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-goog-api-key": apiKey,
         },
         body: JSON.stringify({
-          contents: [
+          model,
+          input: userPrompt,
+          system_instruction: systemPrompt,
+          response_format: [
             {
-              role: "user",
-              parts: [{ text: userPrompt }],
+              type: "text",
+              mime_type: "application/json",
+              schema: { type: "object" },
             },
           ],
-          systemInstruction: {
-            parts: [{ text: systemPrompt }],
+          generation_config: {
+            max_output_tokens: 4096,
+            thinking_level: "minimal",
           },
-          generationConfig: {
-            temperature: 0.2,
-            maxOutputTokens: 4096,
-            responseMimeType: "application/json",
-          },
+          // One-shot call: keep the interaction stateless so nothing is
+          // retained server-side for multi-turn follow-ups we never use.
+          store: false,
         }),
         signal: controller.signal,
       });
@@ -83,7 +86,7 @@ export async function callLlmForJson(
       if (controller.signal.aborted) {
         throw new LlmError(
           "llm_timeout",
-          "The language model request timed out after 60 seconds. Try again, or check that the model endpoint is reachable.",
+          "The language model request timed out after 90 seconds. Try again, or check that the model endpoint is reachable.",
         );
       }
       throw new LlmError(
@@ -121,22 +124,29 @@ export async function callLlmForJson(
     }
 
     const data = (await response.json()) as {
-      candidates?: {
-        content?: { parts?: { text?: string }[] };
+      model?: string;
+      steps?: {
+        type?: string;
+        content?: { type?: string; text?: string }[];
       }[];
-      modelVersion?: string;
     };
+    // The final answer lives in the model_output steps of the interaction
+    // timeline; join any text items from them in order.
     const content =
-      data.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text ?? "")
-        .join("") ?? "";
-    if (typeof content !== "string" || content.trim() === "") {
+      data.steps
+        ?.filter((step) => step.type === "model_output")
+        .flatMap((step) => step.content ?? [])
+        .filter((item) => item.type === "text")
+        .map((item) => item.text ?? "")
+        .join("")
+        .trim() ?? "";
+    if (content === "") {
       throw new LlmError(
         "invalid_llm_json",
         "The language model returned an empty response.",
       );
     }
-    return { content, model: data.modelVersion ?? model };
+    return { content, model: data.model ?? model };
   };
 
   // One retry for transient network failures (5xx / 429 / connection errors).
