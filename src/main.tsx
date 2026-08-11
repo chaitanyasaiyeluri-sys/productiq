@@ -1,7 +1,7 @@
 import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
-import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
+import { AppShell } from "@/components/AppShell";
 import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { ConvexReactClient } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
@@ -13,6 +13,10 @@ import "./index.css";
 const Landing = lazy(() => import("./pages/Landing.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
+const AddProduct = lazy(() => import("./pages/AddProduct.tsx"));
+const Processing = lazy(() => import("./pages/Processing.tsx"));
+const ProductDetail = lazy(() => import("./pages/ProductDetail.tsx"));
+const ValidationCenter = lazy(() => import("./pages/ValidationCenter.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -127,9 +131,41 @@ createRoot(document.getElementById("root")!).render(
               <Route
                 path="/dashboard"
                 element={
-                  <RequireAuth>
+                  <AppShell>
                     <Dashboard />
-                  </RequireAuth>
+                  </AppShell>
+                }
+              />
+              <Route
+                path="/add"
+                element={
+                  <AppShell>
+                    <AddProduct />
+                  </AppShell>
+                }
+              />
+              <Route
+                path="/processing/:jobId"
+                element={
+                  <AppShell>
+                    <Processing />
+                  </AppShell>
+                }
+              />
+              <Route
+                path="/products/:productId"
+                element={
+                  <AppShell>
+                    <ProductDetail />
+                  </AppShell>
+                }
+              />
+              <Route
+                path="/validation"
+                element={
+                  <AppShell>
+                    <ValidationCenter />
+                  </AppShell>
                 }
               />
               <Route path="*" element={<NotFound />} />

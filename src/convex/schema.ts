@@ -32,12 +32,109 @@ const schema = defineSchema(
       role: v.optional(roleValidator), // role of the user. do not remove
     }).index("email", ["email"]), // index for the email. do not remove or modify
 
-    // add other tables here
+    products: defineTable({
+      rawInputText: v.string(),
+      inputName: v.string(),
+      productName: v.string(),
+      category: v.string(),
+      subcategory: v.string(),
+      specs: v.object({
+        material: v.union(v.string(), v.null()),
+        dimensions: v.union(
+          v.object({
+            length: v.union(v.number(), v.null()),
+            width: v.union(v.number(), v.null()),
+            height: v.union(v.number(), v.null()),
+            unit: v.union(v.string(), v.null()),
+          }),
+          v.null(),
+        ),
+        weight: v.union(
+          v.object({
+            value: v.union(v.number(), v.null()),
+            unit: v.union(v.string(), v.null()),
+          }),
+          v.null(),
+        ),
+        voltageRating: v.union(v.string(), v.null()),
+        certifications: v.array(v.string()),
+        otherSpecs: v.record(v.string(), v.string()),
+      }),
+      descriptionShort: v.string(),
+      descriptionDetailed: v.string(),
+      searchKeywords: v.array(v.string()),
+      fieldMetadata: v.record(
+        v.string(),
+        v.object({
+          value: v.union(
+            v.string(),
+            v.number(),
+            v.array(v.string()),
+            v.boolean(),
+            v.null(),
+          ),
+          source: v.union(
+            v.literal("original"),
+            v.literal("ai_generated"),
+            v.literal("ai_inferred"),
+            v.literal("unknown"),
+          ),
+          confidence: v.number(),
+          sourceTextSnippet: v.union(v.string(), v.null()),
+          sourceDocument: v.union(v.string(), v.null()),
+          explanation: v.union(v.string(), v.null()),
+        }),
+      ),
+      validationFlags: v.object({
+        missingFields: v.array(v.string()),
+        conflictingValues: v.array(v.string()),
+        suspiciousValues: v.array(v.string()),
+        unitInconsistencies: v.array(v.string()),
+      }),
+      qualityScore: v.object({
+        overall: v.number(),
+        components: v.object({
+          completeness: v.number(),
+          evidenceCoverage: v.number(),
+          consistency: v.number(),
+          validationStatus: v.number(),
+          commerceReadiness: v.number(),
+        }),
+        explanation: v.string(),
+      }),
+      status: v.union(v.literal("complete"), v.literal("needs_review")),
+      source: v.union(v.literal("seeded"), v.literal("ai_processed")),
+      createdAt: v.number(),
+    }).index("by_createdAt", ["createdAt"]),
 
-    // tableName: defineTable({
-    //   ...
-    //   // table fields
-    // }).index("by_field", ["field"])
+    processingJobs: defineTable({
+      rawInputText: v.string(),
+      inputName: v.string(),
+      status: v.union(
+        v.literal("processing"),
+        v.literal("succeeded"),
+        v.literal("failed"),
+      ),
+      currentStage: v.number(),
+      stages: v.array(
+        v.object({
+          key: v.string(),
+          label: v.string(),
+          status: v.union(
+            v.literal("pending"),
+            v.literal("running"),
+            v.literal("done"),
+            v.literal("error"),
+          ),
+          detail: v.union(v.string(), v.null()),
+        }),
+      ),
+      productId: v.union(v.id("products"), v.null()),
+      errorCode: v.union(v.string(), v.null()),
+      errorMessage: v.union(v.string(), v.null()),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_createdAt", ["createdAt"]),
   },
   {
     schemaValidation: false,
