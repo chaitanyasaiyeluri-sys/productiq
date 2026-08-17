@@ -14,6 +14,9 @@ import {
 import { Link } from "react-router";
 import { useAuth } from "@/hooks/use-auth";
 import { SourceBadge, StatusBadge, ConfidenceBar } from "@/components/product-bits";
+import { api } from "@/convex/_generated/api";
+import { useMutation, useQuery } from "convex/react";
+import { useEffect, useRef } from "react";
 
 const fadeUp = {
   initial: { opacity: 0, y: 16 },
@@ -57,20 +60,20 @@ const PIPELINE_STEPS = [
 
 const RULES = [
   {
-    title: "Never fabricate specifications",
-    text: "If the source doesn't support a technical value, ProductIQ returns unknown — it never invents a spec to fill a gap.",
+    title: "Never invent technical specifications",
+    text: "When the source does not support a value, ProductIQ marks it unknown instead of filling the gap with an assumption.",
   },
   {
-    title: "Every field is classified",
-    text: "Each value carries a source label — original, AI-inferred, AI-generated, or unknown — plus a confidence score.",
+    title: "Every field has a source",
+    text: "Each value is labeled as original, inferred, generated, or unknown, with a confidence score.",
   },
   {
-    title: "Evidence, not invention",
-    text: "Original values keep their verbatim source snippets. Claims are checked against the supplied text before they're shown.",
+    title: "Evidence over assumptions",
+    text: "Original values retain their source evidence so users can understand where the information came from.",
   },
   {
-    title: "Scoring you can audit",
-    text: "The quality score breaks down into completeness, evidence coverage, consistency, validation status, and commerce readiness.",
+    title: "Quality you can measure",
+    text: "Product quality is scored using completeness, evidence, consistency, validation, and catalog readiness.",
   },
 ];
 
@@ -99,28 +102,97 @@ function MockProductCard() {
       <div className="mt-4 space-y-2.5 border-t border-white/10 pt-4">
         <div className="flex items-center justify-between text-[13px]">
           <span className="text-white/60">Material</span>
-          <span className="font-medium text-white">Chrome steel (AISI 52100)</span>
+          <span className="flex items-center gap-2 font-medium text-white">
+            Chrome steel (AISI 52100)
+            <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+              Original
+            </span>
+          </span>
         </div>
         <div className="flex items-center justify-between text-[13px]">
           <span className="text-white/60">Dimensions</span>
-          <span className="font-medium text-white">25 × 52 × 15 mm</span>
+          <span className="flex items-center gap-2 font-medium text-white">
+            25 × 52 × 15 mm
+            <span className="rounded bg-emerald-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300">
+              Original
+            </span>
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-[13px]">
+          <span className="text-white/60">Load capacity</span>
+          <span className="flex items-center gap-2 font-medium text-white/70">
+            Unknown
+            <span className="rounded bg-amber-400/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-300">
+              No source value
+            </span>
+          </span>
         </div>
         <div className="flex items-center justify-between text-[13px]">
           <span className="text-white/60">Confidence</span>
           <ConfidenceBar confidence={88} className="[&>span]:text-white/70" />
         </div>
       </div>
+      <blockquote className="mt-4 rounded-lg border-l-2 border-sky-400/50 bg-white/[0.04] px-3 py-2 text-[12px] italic leading-relaxed text-white/60">
+        “Bore 25 mm, outside diameter 52 mm, width 15 mm. Chrome steel rings and
+        balls. Static load rating 7.8 kN.”
+      </blockquote>
       <div className="mt-4 flex items-center gap-2 rounded-lg bg-emerald-400/10 px-3 py-2 text-[12px] text-emerald-300">
         <CheckCircle2 className="size-3.5 shrink-0" />
-        Validated — no conflicts, units normalized to metric
+        Validated — no conflicts, units normalized to metric, no invented specifications
       </div>
     </div>
   );
 }
 
+function StatSkeleton() {
+  return (
+    <div className="h-[76px] animate-pulse rounded-lg bg-white/[0.06]" />
+  );
+}
+
 export default function Landing() {
   const { isAuthenticated } = useAuth();
+  const stats = useQuery(api.products.stats);
+  const seed = useMutation(api.products.seed);
+  const seededRef = useRef(false);
+
+  // The landing page presents live figures from the demo catalog, so seed it
+  // on first visit (idempotent — the Dashboard does the same).
+  useEffect(() => {
+    if (!stats || stats.total > 0 || seededRef.current) return;
+    seededRef.current = true;
+    void seed({});
+  }, [stats, seed]);
+
   const demoHref = isAuthenticated ? "/dashboard" : "/auth?returnTo=%2Fdashboard";
+  const runHref = "/add";
+
+  const metrics = stats
+    ? [
+        { value: String(stats.total), label: "Products in demo catalog" },
+        { value: String(stats.categoryCount), label: "Industrial categories" },
+        { value: `${stats.fieldsClassifiedPct}%`, label: "Fields classified" },
+        { value: String(stats.unsupportedSpecs), label: "Unsupported specifications" },
+      ]
+    : null;
+
+  const flagRows = stats
+    ? [
+        { label: "Missing fields", count: stats.flagCounts.missingFields, color: "bg-zinc-400" },
+        { label: "Unit inconsistencies", count: stats.flagCounts.unitInconsistencies, color: "bg-sky-500" },
+        { label: "Suspicious values", count: stats.flagCounts.suspiciousValues, color: "bg-amber-500" },
+        { label: "Conflicting values", count: stats.flagCounts.conflictingValues, color: "bg-rose-500" },
+      ]
+    : null;
+  const maxFlagCount = stats
+    ? Math.max(
+        stats.flagCounts.missingFields,
+        stats.flagCounts.conflictingValues,
+        stats.flagCounts.suspiciousValues,
+        stats.flagCounts.unitInconsistencies,
+        1,
+      )
+    : 1;
 
   return (
     <div className="min-h-screen bg-background">
@@ -142,10 +214,10 @@ export default function Landing() {
           </nav>
           <div className="flex items-center gap-2.5">
             <Link
-              to="/auth"
+              to={isAuthenticated ? "/dashboard" : "/auth"}
               className="hidden rounded-lg px-3.5 py-2 text-[13px] font-medium text-white/70 transition-colors hover:text-white sm:block"
             >
-              Sign in
+              {isAuthenticated ? "Dashboard" : "Sign in"}
             </Link>
             <Link
               to={demoHref}
@@ -183,39 +255,40 @@ export default function Landing() {
                 <span className="text-sky-400">you can trust</span>.
               </h1>
               <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-white/60">
-                ProductIQ helps manufacturers, distributors, and catalog teams turn raw,
-                incomplete industrial product information into structured, validated, and
-                commerce-ready records — with every field labeled by source, confidence, and
-                evidence.
+                ProductIQ transforms raw product data from text, spreadsheets, and
+                supplier documents into structured, validated, catalog-ready records.
+                Every field is traceable to its source, scored for confidence, and
+                checked for inconsistencies before it reaches your catalog.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link
-                  to={demoHref}
+                  to={runHref}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xl shadow-primary/30 transition-all hover:bg-primary/90"
                 >
-                  {isAuthenticated ? "Open the dashboard" : "Open the live demo"}
+                  Run a product through ProductIQ
                   <ArrowRight className="size-4" />
                 </Link>
                 <a
                   href="#pipeline"
                   className="inline-flex items-center gap-2 rounded-lg border border-white/15 px-5 py-2.5 text-sm font-medium text-white/80 transition-colors hover:border-white/30 hover:text-white"
                 >
-                  See the pipeline
+                  Explore the AI pipeline
+                  <ArrowRight className="size-4" />
                 </a>
               </div>
               <dl className="mt-12 grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
-                {[
-                  ["42", "products in the demo catalog"],
-                  ["8", "industrial categories"],
-                  ["100%", "of fields classified"],
-                  ["0", "invented specifications"],
-                ].map(([value, label]) => (
-                  <div key={label}>
-                    <dt className="text-2xl font-semibold tabular-nums text-white">{value}</dt>
-                    <dd className="mt-1 text-[12px] leading-snug text-white/50">{label}</dd>
-                  </div>
-                ))}
+                {metrics
+                  ? metrics.map(({ value, label }) => (
+                      <div key={label}>
+                        <dt className="text-2xl font-semibold tabular-nums text-white">{value}</dt>
+                        <dd className="mt-1 text-[12px] leading-snug text-white/50">{label}</dd>
+                      </div>
+                    ))
+                  : Array.from({ length: 4 }).map((_, i) => <StatSkeleton key={i} />)}
               </dl>
+              <p className="mt-6 text-[11px] text-white/35">
+                Live figures computed from the demo catalog — no invented numbers.
+              </p>
             </motion.div>
             <motion.div
               initial={{ opacity: 0, y: 24 }}
@@ -232,15 +305,23 @@ export default function Landing() {
       {/* ---------- Pipeline ---------- */}
       <section id="pipeline" className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
         <motion.div {...fadeUp} className="max-w-2xl">
-          <p className="text-[12px] font-semibold uppercase tracking-widest text-primary">
-            The AI pipeline
-          </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-[12px] font-semibold uppercase tracking-widest text-primary">
+              The AI pipeline
+            </p>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-50 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
+              <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+              Live AI pipeline
+            </span>
+          </div>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
             From raw text to a catalog-ready record in six stages
           </h2>
           <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
-            The live workflow runs a real language-model call under a strict structured-output
-            contract. Every stage is visible, and malformed output is rejected instead of saved.
+            Real-time extraction, validation, provenance tracking, and quality scoring.
+            The live workflow runs a real Gemini call under a strict structured-output
+            contract — every stage is visible, and malformed output is rejected instead
+            of saved.
           </p>
         </motion.div>
         <div className="mt-12 grid gap-px overflow-hidden rounded-2xl border bg-zinc-200/70 sm:grid-cols-2 lg:grid-cols-3">
@@ -266,7 +347,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ---------- Reliability rules ---------- */}
+      {/* ---------- Reliability ---------- */}
       <section id="reliability" className="border-y bg-zinc-50/80">
         <div className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
           <motion.div {...fadeUp} className="max-w-2xl">
@@ -274,11 +355,12 @@ export default function Landing() {
               Reliability by design
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-              The rules that keep AI honest
+              AI built to show its work
             </h2>
             <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
-              ProductIQ is built around a strict AI reliability contract. Judges and catalog
-              teams can always tell where a value came from — and why it was chosen.
+              ProductIQ does not treat AI output as fact. Every field is classified by
+              its origin, backed by available evidence, and checked for conflicts before
+              it becomes part of the catalog.
             </p>
           </motion.div>
           <div className="mt-12 grid gap-5 sm:grid-cols-2">
@@ -300,7 +382,7 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ---------- Quality / validation showcase ---------- */}
+      {/* ---------- Validation ---------- */}
       <section id="quality" className="mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-24">
         <div className="grid items-center gap-14 lg:grid-cols-2">
           <motion.div {...fadeUp}>
@@ -308,20 +390,20 @@ export default function Landing() {
               Validation Center
             </p>
             <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-              See the issues a catalog hides
+              Find the problems hidden in your catalog
             </h2>
             <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
-              The seeded demo catalog is deliberately imperfect: missing fields, conflicting
-              values, unit inconsistencies, and implausible entries. ProductIQ surfaces every
-              one and scores each record so teams know exactly what needs attention.
+              Product data often looks complete until it is checked. ProductIQ detects
+              missing fields, conflicting values, inconsistent units, and suspicious
+              specifications before they reach customers.
             </p>
             <div className="mt-6 flex items-center gap-2 text-[13px] text-zinc-500">
               <Circle className="size-3.5 text-zinc-400" />
-              Weights recorded in millimetres, bearings weighing 950 kg, double voltage ratings —
-              all flagged, none hidden.
+              The demo catalog is deliberately imperfect — weights recorded in millimetres,
+              bearings weighing 950 kg, double voltage ratings. All flagged, none hidden.
             </div>
             <Link
-              to="/dashboard"
+              to="/validation"
               className="mt-8 inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
             >
               Open the Validation Center
@@ -329,45 +411,55 @@ export default function Landing() {
             </Link>
           </motion.div>
           <motion.div {...fadeUp} transition={{ duration: 0.5, delay: 0.1 }}>
-            <div className="rounded-2xl border bg-card p-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-zinc-900">Catalog-wide validation</h3>
-                <span className="flex items-center gap-1.5 text-[12px] text-zinc-500">
-                  <TriangleAlert className="size-3.5 text-amber-500" />
-                  18 records need review
-                </span>
-              </div>
-              <div className="mt-5 space-y-3">
-                {[
-                  { label: "Missing fields", count: 41, color: "bg-zinc-400" },
-                  { label: "Unit inconsistencies", count: 8, color: "bg-sky-500" },
-                  { label: "Suspicious values", count: 7, color: "bg-amber-500" },
-                  { label: "Conflicting values", count: 8, color: "bg-rose-500" },
-                ].map((row) => (
-                  <div key={row.label} className="flex items-center gap-3">
-                    <span className="w-40 text-[13px] text-zinc-600">{row.label}</span>
-                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100">
-                      <div
-                        className={`h-full rounded-full ${row.color}`}
-                        style={{ width: `${Math.min(100, (row.count / 48) * 100)}%` }}
-                      />
+            {stats && flagRows ? (
+              <div className="rounded-2xl border bg-card p-6 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-zinc-900">Catalog-wide validation</h3>
+                  <span className="flex items-center gap-1.5 text-[12px] text-zinc-500">
+                    <TriangleAlert className="size-3.5 text-amber-500" />
+                    {stats.needsReview} records need review
+                  </span>
+                </div>
+                <div className="mt-5 space-y-3">
+                  {flagRows.map((row) => (
+                    <div key={row.label} className="flex items-center gap-3">
+                      <span className="w-40 text-[13px] text-zinc-600">{row.label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-100">
+                        <div
+                          className={`h-full rounded-full ${row.color}`}
+                          style={{ width: `${Math.min(100, (row.count / maxFlagCount) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="w-6 text-right text-[13px] font-semibold tabular-nums text-zinc-800">
+                        {row.count}
+                      </span>
                     </div>
-                    <span className="w-6 text-right text-[13px] font-semibold tabular-nums text-zinc-800">
-                      {row.count}
+                  ))}
+                </div>
+                <div className="mt-6 border-t pt-5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[13px] font-medium text-zinc-700">Average product quality</span>
+                    <span className="text-xl font-semibold tabular-nums text-zinc-900">
+                      {stats.avgQuality} / 100
                     </span>
                   </div>
-                ))}
-              </div>
-              <div className="mt-6 border-t pt-5">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-[13px] font-medium text-zinc-700">Average product quality</span>
-                  <span className="text-xl font-semibold tabular-nums text-zinc-900">74 / 100</span>
+                  <p className="mt-1 text-[12px] text-zinc-500">
+                    Weighted from completeness, evidence, consistency, validation, and commerce readiness.
+                  </p>
                 </div>
-                <p className="mt-1 text-[12px] text-zinc-500">
-                  Weighted from completeness, evidence, consistency, validation, and commerce readiness.
+                <p className="mt-4 border-t pt-3 text-[11px] text-zinc-400">
+                  Live counts from the demo catalog — every figure computed from the current records.
                 </p>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-3 rounded-2xl border bg-card p-6 shadow-sm">
+                <div className="h-4 w-48 animate-pulse rounded bg-zinc-200" />
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-2 animate-pulse rounded-full bg-zinc-100" />
+                ))}
+                <div className="h-4 w-40 animate-pulse rounded bg-zinc-200" />
+              </div>
+            )}
           </motion.div>
         </div>
       </section>
@@ -377,17 +469,17 @@ export default function Landing() {
         <div className="mx-auto max-w-6xl px-4 py-20 text-center sm:px-6">
           <motion.div {...fadeUp}>
             <h2 className="mx-auto max-w-2xl text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Ready to see your catalog transformed?
+              Turn raw product data into trusted product intelligence.
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-white/55">
-              Add a product, paste a datasheet, and watch the live pipeline extract, validate,
-              score, and save it — with full evidence for every field.
+              Add a product or paste your source data and watch ProductIQ extract,
+              validate, score, and prepare it for your catalog.
             </p>
             <Link
-              to="/add"
+              to={runHref}
               className="mt-8 inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-xl shadow-primary/30 transition-colors hover:bg-primary/90"
             >
-              Add your first product
+              Run ProductIQ
               <ArrowRight className="size-4" />
             </Link>
           </motion.div>

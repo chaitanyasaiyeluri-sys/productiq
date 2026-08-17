@@ -172,7 +172,7 @@ export const get = query({
   },
 });
 
-/** Catalog-wide aggregates for the Dashboard. */
+/** Catalog-wide aggregates for the Dashboard and the public landing page. */
 export const stats = query({
   args: {},
   handler: async (ctx) => {
@@ -190,6 +190,22 @@ export const stats = query({
     };
     let sourceCounts = { seeded: 0, aiProcessed: 0 };
     let qualitySum = 0;
+    let unsupportedSpecs = 0;
+    let classifiedFields = 0;
+    let totalFields = 0;
+
+    // Technical specification fields that must never carry an unsupported
+    // value. A spec counts as "unsupported" when a value is present but its
+    // source classification is unknown — i.e. the supplied evidence did not
+    // support it. ProductIQ's pipeline and seed path both return null for
+    // these, so this number is 0 by construction — never invented.
+    const technicalKeys = [
+      "material",
+      "dimensions",
+      "weight",
+      "voltageRating",
+      "certifications",
+    ];
 
     for (const product of products) {
       qualitySum += product.qualityScore.overall;
@@ -210,6 +226,33 @@ export const stats = query({
         const entry = product.fieldMetadata[key];
         if (entry && entry.source !== "unknown" && entry.confidence > 0) {
           confidences.push(entry.confidence);
+        }
+      }
+      for (const key of technicalKeys) {
+        const entry = product.fieldMetadata[key];
+        const hasValue =
+          entry &&
+          entry.value !== null &&
+          entry.value !== undefined &&
+          !(
+            typeof entry.value === "string" && entry.value.trim() === ""
+          ) &&
+          !(Array.isArray(entry.value) && entry.value.length === 0);
+        if (hasValue && entry.source === "unknown") {
+          unsupportedSpecs += 1;
+        }
+      }
+      for (const key of Object.keys(product.fieldMetadata)) {
+        totalFields += 1;
+        const entry = product.fieldMetadata[key];
+        if (
+          entry &&
+          (entry.source === "original" ||
+            entry.source === "ai_generated" ||
+            entry.source === "ai_inferred" ||
+            entry.source === "unknown")
+        ) {
+          classifiedFields += 1;
         }
       }
     }
@@ -233,6 +276,11 @@ export const stats = query({
       avgQuality,
       avgConfidence,
       categoryDistribution,
+      categoryCount: Object.keys(categoryDistribution).length,
+      fieldsClassifiedPct: totalFields
+        ? Math.round((classifiedFields / totalFields) * 100)
+        : 100,
+      unsupportedSpecs,
       flagCounts,
       sourceCounts,
       recent,
