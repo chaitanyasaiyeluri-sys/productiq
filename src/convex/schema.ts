@@ -188,6 +188,14 @@ const schema = defineSchema(
       /** Which LLM provider/model was used (set on first completed row). */
       llmProvider: v.optional(v.string()),
       llmModel: v.optional(v.string()),
+      /** Live rate-limit status from the LLM provider. */
+      rateLimitStatus: v.optional(v.object({
+        provider: v.string(),
+        limit: v.number(),
+        safeBudget: v.number(),
+        currentUsage: v.number(),
+        waitingMs: v.number(),
+      })),
       createdAt: v.number(),
       updatedAt: v.number(),
     }).index("by_createdAt", ["createdAt"]),

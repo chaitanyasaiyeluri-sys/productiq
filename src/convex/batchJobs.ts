@@ -22,8 +22,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Delay between rows to respect Gemini rate limits. */
-const INTER_ROW_DELAY_MS = 1_500;
+/** Provider-specific delays between rows. */
+const GROQ_INTER_ROW_DELAY_MS = 15_000; // Groq free tier: 8000 TPM, need ~15s between rows
+const GEMINI_INTER_ROW_DELAY_MS = 1_500;
+
+/** Maximum in-place retries for429 rate-limit errors before marking row as failed. */
+const ROW_RATE_LIMIT_RETRIES = 3;
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -187,6 +191,29 @@ export const markFailed = internalMutation({
   },
 });
 
+/** Update the live rate-limit status for UI display. Pass null to clear. */
+export const updateRateLimitStatus = internalMutation({
+  args: {
+    jobId: v.id("batchJobs"),
+    status: v.union(
+      v.null(),
+      v.object({
+        provider: v.string(),
+        limit: v.number(),
+        safeBudget: v.number(),
+        currentUsage: v.number(),
+        waitingMs: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, { jobId, status }) => {
+    await ctx.db.patch(jobId, {
+      rateLimitStatus: status ?? undefined,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 /** Format an error into a diagnostic string that includes the error code,
  * retriable flag, and the full message. No secrets are included. */
 function formatError(error: unknown): string {
@@ -200,6 +227,14 @@ function formatError(error: unknown): string {
     return `[${error.name}] ${error.message}`;
   }
   return String(error);
+}
+
+/** Check if an error is a rate-limit (429) that we should retry in-place. */
+function isRateLimitError(error: unknown): boolean {
+  if (error instanceof LlmError) {
+    return error.code === "llm_api_error" && error.retriable && /429|rate.*limit|too.*many.*requests/i.test(error.message);
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,81 +264,122 @@ export const processBatch = action({
         outputRow: null,
       });
 
-      try {
-        const { content, model, provider, usage } = await callLlmForJson(
-          getAiSystemPrompt(),
-          buildUserPrompt(row.rawText),
-        );
-
-        let parsed: ReturnType<typeof llmResponseSchema.parse>;
+      // Per-row retry loop:429 rate-limit errors retry the same row
+      // without counting it as a failed product.
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt <= ROW_RATE_LIMIT_RETRIES; attempt++) {
         try {
-          const json = extractJsonObject(content);
-          parsed = llmResponseSchema.parse(json);
-        } catch (error) {
-          throw new LlmError(
-            ERROR_CODES.INVALID_SCHEMA,
-            `Schema validation failed: ${error instanceof Error ? error.message : "parse error"}`,
+          const { content, model, provider, usage, rateLimitStatus } = await callLlmForJson(
+            getAiSystemPrompt(),
+            buildUserPrompt(row.rawText),
           );
+
+          // Store rate-limit status on first successful call.
+          if (rateLimitStatus && !job.rateLimitStatus) {
+            await ctx.runMutation(internal.batchJobs.updateRateLimitStatus, {
+              jobId,
+              status: rateLimitStatus,
+            });
+          }
+
+          let parsed: ReturnType<typeof llmResponseSchema.parse>;
+          try {
+            const json = extractJsonObject(content);
+            parsed = llmResponseSchema.parse(json);
+          } catch (error) {
+            throw new LlmError(
+              ERROR_CODES.INVALID_SCHEMA,
+              `Schema validation failed: ${error instanceof Error ? error.message : "parse error"}`,
+            );
+          }
+
+          const metadata = verifySnippets(buildFieldMetadata(parsed), row.rawText);
+          const otherSpecsMeta = buildOtherSpecsMetadata(parsed.otherSpecs, row.rawText, null);
+          const conflicts = parsed.conflicts?.map((c) => `${c.field}: ${c.values.join(" / ")}`) ?? [];
+
+          const product = finalizeProduct({
+            rawInputText: row.rawText,
+            inputName: job.name,
+            productName: parsed.productName,
+            category: parsed.category,
+            subcategory: parsed.subcategory,
+            specs: {
+              material: parsed.material,
+              dimensions: parsed.dimensions,
+              weight: parsed.weight,
+              voltageRating: parsed.voltageRating,
+              certifications: parsed.certifications,
+              otherSpecs: parsed.otherSpecs,
+            },
+            descriptionShort: parsed.descriptionShort,
+            descriptionDetailed: parsed.descriptionDetailed,
+            searchKeywords: parsed.searchKeywords,
+            fieldMetadata: metadata,
+            otherSpecsMetadata: otherSpecsMeta,
+            extraFlags: { conflictingValues: conflicts },
+            source: "ai_processed",
+          });
+
+          const productId = await ctx.runMutation(internal.processing.insertProduct, {
+            rawInputText: product.rawInputText,
+            inputName: product.inputName,
+            productName: product.productName,
+            category: product.category,
+            subcategory: product.subcategory,
+            specs: product.specs,
+            descriptionShort: product.descriptionShort,
+            descriptionDetailed: product.descriptionDetailed,
+            searchKeywords: product.searchKeywords,
+            fieldMetadata: product.fieldMetadata,
+            otherSpecsMetadata: product.otherSpecsMetadata,
+            validationFlags: product.validationFlags,
+            qualityScore: product.qualityScore,
+            status: product.status,
+            source: product.source,
+            createdAt: product.createdAt,
+          });
+
+          await ctx.runMutation(internal.batchJobs.updateRow, {
+            jobId,
+            rowIndex: i,
+            status: "completed",
+            error: null,
+            productId,
+            outputRow: null,
+            llmProvider: provider,
+            llmModel: model,
+          });
+          lastError = null; // success — break out of retry loop
+          break;
+        } catch (error) {
+          lastError = error;
+          // If this is a429 rate-limit error and we have retries left, wait and retry the same row.
+          if (isRateLimitError(error) && attempt < ROW_RATE_LIMIT_RETRIES) {
+            // The LlmError may carry a retryAfterMs from the Retry-After header.
+            const retryMs = error instanceof LlmError ? error.retryAfterMs : null;
+            const waitMs = retryMs ?? 30_000; // default30s if no Retry-After
+            await sleep(waitMs);
+            // Update rate-limit status for UI.
+            await ctx.runMutation(internal.batchJobs.updateRateLimitStatus, {
+              jobId,
+              status: {
+                provider: "groq",
+                limit: 8000,
+                safeBudget: 6000,
+                currentUsage: 8000,
+                waitingMs: waitMs,
+              },
+            });
+            continue; // retry same row
+          }
+          // Non-retryable or retries exhausted — mark row as failed.
+          break;
         }
+      }
 
-        const metadata = verifySnippets(buildFieldMetadata(parsed), row.rawText);
-        const otherSpecsMeta = buildOtherSpecsMetadata(parsed.otherSpecs, row.rawText, null);
-        const conflicts = parsed.conflicts?.map((c) => `${c.field}: ${c.values.join(" / ")}`) ?? [];
-
-        const product = finalizeProduct({
-          rawInputText: row.rawText,
-          inputName: job.name,
-          productName: parsed.productName,
-          category: parsed.category,
-          subcategory: parsed.subcategory,
-          specs: {
-            material: parsed.material,
-            dimensions: parsed.dimensions,
-            weight: parsed.weight,
-            voltageRating: parsed.voltageRating,
-            certifications: parsed.certifications,
-            otherSpecs: parsed.otherSpecs,
-          },
-          descriptionShort: parsed.descriptionShort,
-          descriptionDetailed: parsed.descriptionDetailed,
-          searchKeywords: parsed.searchKeywords,
-          fieldMetadata: metadata,
-          otherSpecsMetadata: otherSpecsMeta,
-          extraFlags: { conflictingValues: conflicts },
-          source: "ai_processed",
-        });
-
-        const productId = await ctx.runMutation(internal.processing.insertProduct, {
-          rawInputText: product.rawInputText,
-          inputName: product.inputName,
-          productName: product.productName,
-          category: product.category,
-          subcategory: product.subcategory,
-          specs: product.specs,
-          descriptionShort: product.descriptionShort,
-          descriptionDetailed: product.descriptionDetailed,
-          searchKeywords: product.searchKeywords,
-          fieldMetadata: product.fieldMetadata,
-          otherSpecsMetadata: product.otherSpecsMetadata,
-          validationFlags: product.validationFlags,
-          qualityScore: product.qualityScore,
-          status: product.status,
-          source: product.source,
-          createdAt: product.createdAt,
-        });
-
-        await ctx.runMutation(internal.batchJobs.updateRow, {
-          jobId,
-          rowIndex: i,
-          status: "completed",
-          error: null,
-          productId,
-          outputRow: null,
-          llmProvider: provider,
-          llmModel: model,
-        });
-      } catch (error) {
-        const diagnostic = formatError(error);
+      // If all retries failed, mark the row as failed.
+      if (lastError) {
+        const diagnostic = formatError(lastError);
         await ctx.runMutation(internal.batchJobs.updateRow, {
           jobId,
           rowIndex: i,
@@ -314,12 +390,22 @@ export const processBatch = action({
         });
       }
 
-      // Rate-limit protection: pause between rows to avoid 429s.
+      // Provider-specific inter-row delay.
       if (i < job.rows.length - 1) {
-        await sleep(INTER_ROW_DELAY_MS);
+        // Re-read job to get current provider.
+        const currentJob = await ctx.runQuery(api.batchJobs.get, { jobId });
+        const delay = currentJob?.llmProvider === "groq"
+          ? GROQ_INTER_ROW_DELAY_MS
+          : GEMINI_INTER_ROW_DELAY_MS;
+        await sleep(delay);
       }
     }
 
+    // Clear rate-limit status when batch completes.
+    await ctx.runMutation(internal.batchJobs.updateRateLimitStatus, {
+      jobId,
+      status: null,
+    });
     await ctx.runMutation(internal.batchJobs.markCompleted, { jobId });
   },
 });
@@ -439,7 +525,10 @@ export const retryFailed = action({
       }
 
       if (i < freshJob.rows.length - 1) {
-        await sleep(INTER_ROW_DELAY_MS);
+        const delay = freshJob.llmProvider === "groq"
+          ? GROQ_INTER_ROW_DELAY_MS
+          : GEMINI_INTER_ROW_DELAY_MS;
+        await sleep(delay);
       }
     }
 

@@ -57,6 +57,15 @@ export interface LlmResult {
   model: string;
   provider: LlmProvider;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+  rateLimitStatus?: RateLimitStatus;
+}
+
+export interface RateLimitStatus {
+  provider: string;
+  limit: number;
+  safeBudget: number;
+  currentUsage: number;
+  waitingMs: number;
 }
 
 export const AVAILABLE_MODELS: Record<LlmProvider, { id: string; label: string }[]> = {
@@ -115,6 +124,103 @@ function parseRetryAfterMs(response: Response): number | null {
 }
 
 // ---------------------------------------------------------------------------
+// TPM-aware rate limiter for Groq free tier
+// ---------------------------------------------------------------------------
+
+class TokenRateLimiter {
+  private windowMs = 60_000; // 1-minute sliding window
+  private safeBudget: number; // conservative budget (tokens/min)
+  private estimates: { ts: number; tokens: number }[] = [];
+
+  /** @param tokensPerMinute — hard API limit (8000 for Groq free tier) */
+  constructor(tokensPerMinute: number) {
+    // Use 75% of hard limit as safe budget.
+    this.safeBudget = Math.floor(tokensPerMinute * 0.75);
+  }
+
+  /** Remove records older than the sliding window. */
+  private prune(now: number) {
+    this.estimates = this.estimates.filter(
+      (r) => now - r.ts < this.windowMs,
+    );
+  }
+
+  /** Current token usage within the sliding window. */
+  currentUsage(now = Date.now()): number {
+    this.prune(now);
+    return this.estimates.reduce((sum, r) => sum + r.tokens, 0);
+  }
+
+  /**
+   * Wait until the safe budget has room for `estimatedTokens`.
+   * Returns the time waited (ms) so callers can report it.
+   */
+  async waitIfNecessary(estimatedTokens: number): Promise<number> {
+    let totalWaited = 0;
+    // Max 5 minutes of waiting to avoid infinite hangs.
+    const maxWait = 5 * 60_000;
+    const startWait = Date.now();
+
+    while (Date.now() - startWait < maxWait) {
+      const now = Date.now();
+      this.prune(now);
+      const current = this.currentUsage(now);
+
+      if (current + estimatedTokens <= this.safeBudget) {
+        return totalWaited;
+      }
+
+      // Find the oldest record that, when it expires, frees enough budget.
+      const target = current + estimatedTokens - this.safeBudget;
+      let freed = 0;
+      let waitUntil = now + 1000; // fallback: wait 1s
+      for (const record of this.estimates) {
+        freed += record.tokens;
+        if (freed >= target) {
+          waitUntil = record.ts + this.windowMs;
+          break;
+        }
+      }
+
+      const waitMs = Math.max(100, waitUntil - Date.now());
+      totalWaited += waitMs;
+      await sleep(waitMs);
+    }
+
+    return totalWaited;
+  }
+
+  /** Record actual token usage after a successful request. */
+  recordUsage(usage: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  }) {
+    const tokens = (usage.total_tokens ?? 0) ||
+      ((usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0));
+    if (tokens > 0) {
+      this.estimates.push({ ts: Date.now(), tokens });
+    }
+  }
+
+  /** Snapshot of current rate-limit status for UI display. */
+  getStatus(limit: number): RateLimitStatus {
+    const now = Date.now();
+    this.prune(now);
+    return {
+      provider: "groq",
+      limit,
+      safeBudget: this.safeBudget,
+      currentUsage: this.currentUsage(now),
+      waitingMs: 0,
+    };
+  }
+}
+
+/** Global singleton — one limiter per process for Groq. */
+const groqLimiter = new TokenRateLimiter(8_000);
+
+// ---------------------------------------------------------------------------
 // Groq provider (OpenAI-compatible chat completions)
 // ---------------------------------------------------------------------------
 
@@ -132,8 +238,14 @@ async function callGroq(
 
   const model = getConfiguredModel("groq");
   const baseUrl = "https://api.groq.com/openai/v1";
+  // Conservative estimate of per-request token cost (prompt + max output).
+  // Actual usage varies; this keeps us safely under the 8000 TPM limit.
+  const ESTIMATED_TOKENS = 5_500;
 
   const attempt = async (): Promise<LlmResult> => {
+    // TPM-aware wait: pause if the next request would exceed safe budget.
+    await groqLimiter.waitIfNecessary(ESTIMATED_TOKENS);
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 90_000);
 
@@ -207,11 +319,15 @@ async function callGroq(
       );
     }
 
+    // Record actual usage in the rate limiter for future scheduling.
+    if (data.usage) groqLimiter.recordUsage(data.usage);
+
     return {
       content,
       model: data.model ?? model,
       provider: "groq" as const,
       usage: data.usage,
+      rateLimitStatus: groqLimiter.getStatus(8_000),
     };
   };
 

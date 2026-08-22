@@ -145,9 +145,19 @@ export default function BatchDetail() {
               {job.inputHeaders.length} input columns · Started {new Date(job.createdAt).toLocaleString()}
             </p>
             {job.llmProvider && (
-              <p className="mt-1 text-[12px] font-medium text-zinc-600 bg-zinc-100 inline-block rounded px-2 py-0.5">
-                Provider: {job.llmProvider === "groq" ? "Groq" : "Gemini"} · Model: {job.llmModel ?? "default"}
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <p className="text-[12px] font-medium text-zinc-600 bg-zinc-100 inline-block rounded px-2 py-0.5">
+                  Provider: {job.llmProvider === "groq" ? "Groq" : "Gemini"} · Model: {job.llmModel ?? "default"}
+                </p>
+                {job.llmProvider === "groq" && job.rateLimitStatus && (
+                  <p className="text-[11px] text-zinc-500 bg-zinc-50 inline-block rounded px-2 py-0.5 ring-1 ring-inset ring-zinc-200">
+                    TPM: {job.rateLimitStatus.currentUsage.toLocaleString()} / {job.rateLimitStatus.safeBudget.toLocaleString()} used
+                    {job.rateLimitStatus.waitingMs > 0 && (
+                      <span className="ml-1 text-amber-600"> · Waiting {Math.ceil(job.rateLimitStatus.waitingMs / 1000)}s</span>
+                    )}
+                  </p>
+                )}
+              </div>
             )}
             {job.sourceTotalRows > job.totalRows && (
               <p className="mt-1 text-[12px] font-medium text-amber-700 bg-amber-50 inline-block rounded px-2 py-0.5">
