@@ -133,9 +133,12 @@ export default function BatchUpload() {
   const [error, setError] = useState<string | null>(null);
   const [isUploadingSchema, setIsUploadingSchema] = useState(false);
   const [isCreatingJob, setIsCreatingJob] = useState(false);
-  const [batchSize, setBatchSize] = useState<10 | 25 | 100 | 0>(10);
+  const [batchSize, setBatchSize] = useState<1 | 2 | 5 | 10 | 25 | 100 | 0>(1);
 
-  const BATCH_OPTIONS: { label: string; value: 10 | 25 | 100 | 0 }[] = [
+  const BATCH_OPTIONS: { label: string; value: 1 | 2 | 5 | 10 | 25 | 100 | 0 }[] = [
+    { label: "1 row", value: 1 },
+    { label: "2 rows", value: 2 },
+    { label: "5 rows", value: 5 },
     { label: "10 rows", value: 10 },
     { label: "25 rows", value: 25 },
     { label: "100 rows", value: 100 },
