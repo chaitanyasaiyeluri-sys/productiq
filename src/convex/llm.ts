@@ -56,6 +56,7 @@ export interface LlmResult {
   content: string;
   model: string;
   provider: LlmProvider;
+  usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
 }
 
 export const AVAILABLE_MODELS: Record<LlmProvider, { id: string; label: string }[]> = {
@@ -101,6 +102,8 @@ function isQuotaExhausted(status: number, message: string): boolean {
   // Hard quota / billing limit — do not retry.
   if (status === 402) return true;
   if (status === 429 && /quota|exceed|limit.*daily|limit.*monthly/i.test(message)) return true;
+  // Groq: request too large for model (TPM limit exceeded)
+  if (/request.*too.*large|TPM.*limit|requested.*exceeds/i.test(message)) return true;
   return false;
 }
 
@@ -149,7 +152,7 @@ async function callGroq(
             { role: "user", content: userPrompt },
           ],
           temperature: 0.1,
-          max_tokens: 16384,
+          max_completion_tokens: 4096,
           response_format: { type: "json_object" },
         }),
         signal: controller.signal,
@@ -204,7 +207,12 @@ async function callGroq(
       );
     }
 
-    return { content, model: data.model ?? model, provider: "groq" as const };
+    return {
+      content,
+      model: data.model ?? model,
+      provider: "groq" as const,
+      usage: data.usage,
+    };
   };
 
   // Exponential backoff with jitter for transient failures.

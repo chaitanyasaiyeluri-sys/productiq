@@ -230,7 +230,7 @@ export const processBatch = action({
       });
 
       try {
-        const { content, model, provider } = await callLlmForJson(
+        const { content, model, provider, usage } = await callLlmForJson(
           getAiSystemPrompt(),
           buildUserPrompt(row.rawText),
         );
@@ -354,7 +354,7 @@ export const retryFailed = action({
       });
 
       try {
-        const { content, model, provider } = await callLlmForJson(
+        const { content, model, provider, usage } = await callLlmForJson(
           getAiSystemPrompt(),
           buildUserPrompt(row.rawText),
         );

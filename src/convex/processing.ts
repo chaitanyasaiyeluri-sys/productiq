@@ -297,7 +297,7 @@ export const process = action({
         "running",
         "Sending raw input to the language model for extraction",
       );
-      const { content, model, provider } = await callLlmForJson(
+      const { content, model, provider, usage } = await callLlmForJson(
         getAiSystemPrompt(),
         buildUserPrompt(job.rawInputText),
       );
@@ -312,10 +312,11 @@ export const process = action({
           `The language model returned data that did not match the ProductIQ schema (${error instanceof Error ? error.message : "parse error"}). No data was saved — the pipeline stopped instead of storing malformed output.`,
         );
       }
+      const tokenInfo = usage ? ` · ${usage.prompt_tokens ?? 0} prompt / ${usage.completion_tokens ?? 0} completion tokens` : "";
       await setStage(
         0,
         "done",
-        `Extracted ${parsed.productName ? "product identity" : "attributes"} (Provider: ${provider}, Model: ${model})`,
+        `Extracted ${parsed.productName ? "product identity" : "attributes"} (Provider: ${provider}, Model: ${model}${tokenInfo})`,
       );
 
       // --- Enrich ---------------------------------------------------------
