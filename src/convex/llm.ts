@@ -99,7 +99,7 @@ export async function callLlmForJson(
             },
           ],
           generation_config: {
-            max_output_tokens: 4096,
+            max_output_tokens: 16384,
             thinking_level: "minimal",
           },
           // One-shot call: keep the interaction stateless so nothing is
@@ -148,28 +148,60 @@ export async function callLlmForJson(
       );
     }
 
-    const data = (await response.json()) as {
+    const rawBody = await response.json();
+    const data = rawBody as Record<string, unknown> & {
       model?: string;
       steps?: {
         type?: string;
         content?: { type?: string; text?: string }[];
       }[];
     };
-    // The final answer is the last model_output step of the interaction
-    // timeline; join its text items in order. Earlier steps can carry
-    // thoughts or intermediate text that would corrupt the JSON.
-    const outputSteps =
-      data.steps?.filter((step) => step.type === "model_output") ?? [];
-    const content =
-      (outputSteps[outputSteps.length - 1]?.content ?? [])
-        .filter((item) => item.type === "text")
-        .map((item) => item.text ?? "")
-        .join("")
-        .trim() ?? "";
+
+    // --- Content extraction with multiple fallbacks ---
+    let content = "";
+
+    // Primary: Interactions API steps array
+    const steps = data.steps;
+    if (Array.isArray(steps)) {
+      const outputSteps = steps.filter(
+        (step) => (step as { type?: string }).type === "model_output",
+      );
+      const lastStep = outputSteps[outputSteps.length - 1] as
+        | { content?: { type?: string; text?: string }[] }
+        | undefined;
+      content =
+        (lastStep?.content ?? [])
+          .filter((item) => item.type === "text")
+          .map((item) => item.text ?? "")
+          .join("")
+          .trim() ?? "";
+    }
+
+    // Fallback 1: response has a top-level "output" or "result" string
+    if (!content) {
+      const fallback =
+        typeof data.output === "string"
+          ? data.output
+          : typeof data.result === "string"
+            ? data.result
+            : typeof data.text === "string"
+              ? data.text
+              : "";
+      if (fallback.trim()) content = fallback.trim();
+    }
+
+    // Fallback 2: the entire response IS the JSON text
+    if (!content && typeof rawBody === "string") {
+      content = rawBody.trim();
+    }
+
     if (content === "") {
+      // Diagnostic: include a snippet of the raw response so the error
+      // message tells us exactly what shape the API returned.
+      const snippet = JSON.stringify(rawBody).slice(0, 500);
       throw new LlmError(
         "invalid_llm_json",
-        "The language model returned an empty response.",
+        `The language model returned an empty response. Raw API response snippet: ${snippet}`,
       );
     }
     return { content, model: data.model ?? model };
