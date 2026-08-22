@@ -18,6 +18,13 @@ import {
 import { buildOtherSpecsMetadata, finalizeProduct } from "./scoring";
 import { ERROR_CODES } from "./types";
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Delay between rows to respect Gemini rate limits. */
+const INTER_ROW_DELAY_MS = 1_500;
+
 // ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
@@ -126,6 +133,28 @@ export const updateRow = internalMutation({
   },
 });
 
+/** Reset all failed rows back to queued so retryFailed can reprocess them. */
+export const resetFailedRows = internalMutation({
+  args: { jobId: v.id("batchJobs") },
+  handler: async (ctx, { jobId }) => {
+    const job = await ctx.db.get(jobId);
+    if (!job) return;
+    const rows = job.rows.map((row) =>
+      row.status === "failed"
+        ? { ...row, status: "queued" as const, error: null, productId: null, outputRow: null }
+        : row,
+    );
+    const processedRows = rows.filter((r) => r.status === "completed").length;
+    const failedRows = rows.filter((r) => r.status === "failed").length;
+    await ctx.db.patch(jobId, {
+      rows,
+      processedRows,
+      failedRows,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 /** Mark a batch job as completed. */
 export const markCompleted = internalMutation({
   args: { jobId: v.id("batchJobs") },
@@ -152,7 +181,7 @@ export const markFailed = internalMutation({
 // The batch processing action
 // ---------------------------------------------------------------------------
 
-/** Process all rows in a batch job sequentially. */
+/** Process all rows in a batch job sequentially with rate-limit protection. */
 export const processBatch = action({
   args: { jobId: v.id("batchJobs") },
   handler: async (ctx, { jobId }) => {
@@ -176,8 +205,7 @@ export const processBatch = action({
       });
 
       try {
-        // Run the same Gemini extraction pipeline as single-product processing
-        const { content, model } = await callLlmForJson(
+        const { content } = await callLlmForJson(
           getAiSystemPrompt(),
           buildUserPrompt(row.rawText),
         );
@@ -193,21 +221,9 @@ export const processBatch = action({
           );
         }
 
-        // Build provenance
-        const metadata = verifySnippets(
-          buildFieldMetadata(parsed),
-          row.rawText,
-        );
-        const otherSpecsMeta = buildOtherSpecsMetadata(
-          parsed.otherSpecs,
-          row.rawText,
-          null,
-        );
-
-        const conflicts =
-          parsed.conflicts?.map(
-            (c) => `${c.field}: ${c.values.join(" / ")}`,
-          ) ?? [];
+        const metadata = verifySnippets(buildFieldMetadata(parsed), row.rawText);
+        const otherSpecsMeta = buildOtherSpecsMetadata(parsed.otherSpecs, row.rawText, null);
+        const conflicts = parsed.conflicts?.map((c) => `${c.field}: ${c.values.join(" / ")}`) ?? [];
 
         const product = finalizeProduct({
           rawInputText: row.rawText,
@@ -232,28 +248,24 @@ export const processBatch = action({
           source: "ai_processed",
         });
 
-        // Save to products table
-        const productId = await ctx.runMutation(
-          internal.processing.insertProduct,
-          {
-            rawInputText: product.rawInputText,
-            inputName: product.inputName,
-            productName: product.productName,
-            category: product.category,
-            subcategory: product.subcategory,
-            specs: product.specs,
-            descriptionShort: product.descriptionShort,
-            descriptionDetailed: product.descriptionDetailed,
-            searchKeywords: product.searchKeywords,
-            fieldMetadata: product.fieldMetadata,
-            otherSpecsMetadata: product.otherSpecsMetadata,
-            validationFlags: product.validationFlags,
-            qualityScore: product.qualityScore,
-            status: product.status,
-            source: product.source,
-            createdAt: product.createdAt,
-          },
-        );
+        const productId = await ctx.runMutation(internal.processing.insertProduct, {
+          rawInputText: product.rawInputText,
+          inputName: product.inputName,
+          productName: product.productName,
+          category: product.category,
+          subcategory: product.subcategory,
+          specs: product.specs,
+          descriptionShort: product.descriptionShort,
+          descriptionDetailed: product.descriptionDetailed,
+          searchKeywords: product.searchKeywords,
+          fieldMetadata: product.fieldMetadata,
+          otherSpecsMetadata: product.otherSpecsMetadata,
+          validationFlags: product.validationFlags,
+          qualityScore: product.qualityScore,
+          status: product.status,
+          source: product.source,
+          createdAt: product.createdAt,
+        });
 
         await ctx.runMutation(internal.batchJobs.updateRow, {
           jobId,
@@ -261,11 +273,10 @@ export const processBatch = action({
           status: "completed",
           error: null,
           productId,
-          outputRow: null, // Will be populated by delivery mapper
+          outputRow: null,
         });
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         await ctx.runMutation(internal.batchJobs.updateRow, {
           jobId,
           rowIndex: i,
@@ -274,6 +285,132 @@ export const processBatch = action({
           productId: null,
           outputRow: null,
         });
+      }
+
+      // Rate-limit protection: pause between rows to avoid 429s.
+      if (i < job.rows.length - 1) {
+        await sleep(INTER_ROW_DELAY_MS);
+      }
+    }
+
+    await ctx.runMutation(internal.batchJobs.markCompleted, { jobId });
+  },
+});
+
+/** Retry only the failed rows in an existing batch job. */
+export const retryFailed = action({
+  args: { jobId: v.id("batchJobs") },
+  handler: async (ctx, { jobId }) => {
+    const job = await ctx.runQuery(api.batchJobs.get, { jobId });
+    if (!job) throw new ConvexError("Batch job not found.");
+    if (job.status !== "completed" && job.status !== "failed") return;
+
+    // Reset failed rows back to queued so the loop picks them up.
+    await ctx.runMutation(internal.batchJobs.resetFailedRows, { jobId });
+    await ctx.runMutation(internal.batchJobs.markProcessing, { jobId });
+
+    // Re-read the job after reset.
+    const freshJob = await ctx.runQuery(api.batchJobs.get, { jobId });
+    if (!freshJob) throw new ConvexError("Batch job not found.");
+
+    for (let i = 0; i < freshJob.rows.length; i++) {
+      const row = freshJob.rows[i];
+      if (row.status !== "queued") continue;
+
+      await ctx.runMutation(internal.batchJobs.updateRow, {
+        jobId,
+        rowIndex: i,
+        status: "processing",
+        error: null,
+        productId: null,
+        outputRow: null,
+      });
+
+      try {
+        const { content } = await callLlmForJson(
+          getAiSystemPrompt(),
+          buildUserPrompt(row.rawText),
+        );
+
+        let parsed: ReturnType<typeof llmResponseSchema.parse>;
+        try {
+          const json = extractJsonObject(content);
+          parsed = llmResponseSchema.parse(json);
+        } catch (error) {
+          throw new LlmError(
+            ERROR_CODES.INVALID_SCHEMA,
+            `Schema validation failed: ${error instanceof Error ? error.message : "parse error"}`,
+          );
+        }
+
+        const metadata = verifySnippets(buildFieldMetadata(parsed), row.rawText);
+        const otherSpecsMeta = buildOtherSpecsMetadata(parsed.otherSpecs, row.rawText, null);
+        const conflicts = parsed.conflicts?.map((c) => `${c.field}: ${c.values.join(" / ")}`) ?? [];
+
+        const product = finalizeProduct({
+          rawInputText: row.rawText,
+          inputName: freshJob.name,
+          productName: parsed.productName,
+          category: parsed.category,
+          subcategory: parsed.subcategory,
+          specs: {
+            material: parsed.material,
+            dimensions: parsed.dimensions,
+            weight: parsed.weight,
+            voltageRating: parsed.voltageRating,
+            certifications: parsed.certifications,
+            otherSpecs: parsed.otherSpecs,
+          },
+          descriptionShort: parsed.descriptionShort,
+          descriptionDetailed: parsed.descriptionDetailed,
+          searchKeywords: parsed.searchKeywords,
+          fieldMetadata: metadata,
+          otherSpecsMetadata: otherSpecsMeta,
+          extraFlags: { conflictingValues: conflicts },
+          source: "ai_processed",
+        });
+
+        const productId = await ctx.runMutation(internal.processing.insertProduct, {
+          rawInputText: product.rawInputText,
+          inputName: product.inputName,
+          productName: product.productName,
+          category: product.category,
+          subcategory: product.subcategory,
+          specs: product.specs,
+          descriptionShort: product.descriptionShort,
+          descriptionDetailed: product.descriptionDetailed,
+          searchKeywords: product.searchKeywords,
+          fieldMetadata: product.fieldMetadata,
+          otherSpecsMetadata: product.otherSpecsMetadata,
+          validationFlags: product.validationFlags,
+          qualityScore: product.qualityScore,
+          status: product.status,
+          source: product.source,
+          createdAt: product.createdAt,
+        });
+
+        await ctx.runMutation(internal.batchJobs.updateRow, {
+          jobId,
+          rowIndex: i,
+          status: "completed",
+          error: null,
+          productId,
+          outputRow: null,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await ctx.runMutation(internal.batchJobs.updateRow, {
+          jobId,
+          rowIndex: i,
+          status: "failed",
+          error: message,
+          productId: null,
+          outputRow: null,
+        });
+      }
+
+      if (i < freshJob.rows.length - 1) {
+        await sleep(INTER_ROW_DELAY_MS);
       }
     }
 

@@ -3,8 +3,8 @@
  * delivery preview with header validation, and CSV/XLSX export.
  */
 import { api } from "@/convex/_generated/api";
-import { useQuery } from "convex/react";
-import { useMemo } from "react";
+import { useAction, useQuery } from "convex/react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import {
   AlertTriangle,
@@ -14,6 +14,7 @@ import {
   FileSpreadsheet,
   FileText,
   Loader2,
+  RotateCw,
   ShieldCheck,
   XCircle,
 } from "lucide-react";
@@ -37,6 +38,20 @@ export default function BatchDetail() {
 
   // Fetch all products that were created by this batch
   const allProducts = useQuery(api.products.list);
+  const retryFailed = useAction(api.batchJobs.retryFailed);
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    if (!jobId) return;
+    setRetrying(true);
+    try {
+      await retryFailed({ jobId: jobId as never });
+    } catch (e) {
+      console.error("Retry failed", e);
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   // Map batch row products to delivery output
   const outputRows = useMemo(() => {
@@ -139,6 +154,34 @@ export default function BatchDetail() {
         <StatusCard label="Success rate" value={`${successRate}%`} tone="sky" />
         <StatusCard label="Output columns" value={String(headers.length)} tone={headersValid ? "emerald" : "amber"} />
       </div>
+
+      {/* Retry failed rows */}
+      {(isCompleted || isFailed) && job.failedRows > 0 && !isProcessing && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <RotateCw className="size-4 text-amber-600" />
+              <span className="text-[13px] font-medium text-amber-900">
+                {job.failedRows} of {job.totalRows} rows failed — retry only the failed rows
+              </span>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleRetry}
+              disabled={retrying}
+              className="gap-1.5"
+            >
+              {retrying ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <RotateCw className="size-3.5" />
+              )}
+              {retrying ? "Retrying..." : "Retry Failed Rows"}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Progress bar */}
       {isProcessing && (

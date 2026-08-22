@@ -13,15 +13,39 @@
 
 export class LlmError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  retriable: boolean;
+  retryAfterMs: number | null;
+  constructor(code: string, message: string, retriable = false, retryAfterMs: number | null = null) {
     super(message);
     this.code = code;
+    this.retriable = retriable;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MODEL = "gemini-3.6-flash";
 const DEFAULT_TIMEOUT_MS = 90_000;
+const MAX_RETRIES = 5;
+const BASE_DELAY_MS = 2_000;
+const MAX_DELAY_MS = 60_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Check if an HTTP status is transient / retriable. */
+function isRetriableStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504 || status === 408;
+}
+
+/** Parse Retry-After header; falls back to null. */
+function parseRetryAfterMs(response: Response): number | null {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) ? seconds * 1000 : null;
+}
 
 interface LlmResult {
   content: string;
@@ -94,6 +118,7 @@ export async function callLlmForJson(
       throw new LlmError(
         "llm_api_error",
         `Network error while calling the language model: ${error instanceof Error ? error.message : String(error)}`,
+        true, // network errors are retriable
       );
     } finally {
       clearTimeout(timer);
@@ -110,18 +135,16 @@ export async function callLlmForJson(
         // ignore body parsing failures
       }
       const status = response.status;
-      const retriable =
-        status >= 500 ||
-        status === 429 ||
-        status === 408 ||
-        status === 401 ||
-        status === 403;
+      const retriable = isRetriableStatus(status);
+      const retryAfterMs = retriable ? parseRetryAfterMs(response) : null;
       const message =
         detail ||
         `The Gemini API returned HTTP ${status}.`;
       throw new LlmError(
-        retriable ? "llm_api_error" : "llm_api_error",
+        "llm_api_error",
         message,
+        retriable,
+        retryAfterMs,
       );
     }
 
@@ -152,15 +175,30 @@ export async function callLlmForJson(
     return { content, model: data.model ?? model };
   };
 
-  // One retry for transient network failures (5xx / 429 / connection errors).
-  try {
-    return await attempt();
-  } catch (error) {
-    if (error instanceof LlmError && error.code === "llm_api_error") {
+  // Exponential backoff with jitter for transient failures (429, 5xx, network).
+  let lastError: unknown;
+  for (let attemptNum = 0; attemptNum <= MAX_RETRIES; attemptNum++) {
+    try {
       return await attempt();
+    } catch (error) {
+      lastError = error;
+      const retriable = error instanceof LlmError && error.retriable;
+      if (!retriable || attemptNum === MAX_RETRIES) {
+        throw error;
+      }
+      // Prefer Retry-After header; fall back to exponential backoff with jitter.
+      const retryAfterMs =
+        error instanceof LlmError ? error.retryAfterMs : null;
+      const delay = retryAfterMs != null
+        ? Math.min(retryAfterMs + Math.random() * 1_000, MAX_DELAY_MS)
+        : Math.min(
+            BASE_DELAY_MS * Math.pow(2, attemptNum) + Math.random() * 1_000,
+            MAX_DELAY_MS,
+          );
+      await sleep(delay);
     }
-    throw error;
   }
+  throw lastError;
 }
 
 /** Extracts a JSON object from an LLM reply, tolerating markdown fences. */
