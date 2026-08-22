@@ -185,6 +185,9 @@ const schema = defineSchema(
           outputRow: v.union(v.record(v.string(), v.string()), v.null()),
         }),
       ),
+      /** Which LLM provider/model was used (set on first completed row). */
+      llmProvider: v.optional(v.string()),
+      llmModel: v.optional(v.string()),
       createdAt: v.number(),
       updatedAt: v.number(),
     }).index("by_createdAt", ["createdAt"]),

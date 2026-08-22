@@ -297,7 +297,7 @@ export const process = action({
         "running",
         "Sending raw input to the language model for extraction",
       );
-      const { content, model } = await callLlmForJson(
+      const { content, model, provider } = await callLlmForJson(
         getAiSystemPrompt(),
         buildUserPrompt(job.rawInputText),
       );
@@ -315,7 +315,7 @@ export const process = action({
       await setStage(
         0,
         "done",
-        `Extracted ${parsed.productName ? "product identity" : "attributes"} (${model})`,
+        `Extracted ${parsed.productName ? "product identity" : "attributes"} (Provider: ${provider}, Model: ${model})`,
       );
 
       // --- Enrich ---------------------------------------------------------

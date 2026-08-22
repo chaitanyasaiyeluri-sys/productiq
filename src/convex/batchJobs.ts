@@ -118,8 +118,10 @@ export const updateRow = internalMutation({
     error: v.union(v.string(), v.null()),
     productId: v.union(v.id("products"), v.null()),
     outputRow: v.union(v.record(v.string(), v.string()), v.null()),
+    llmProvider: v.optional(v.string()),
+    llmModel: v.optional(v.string()),
   },
-  handler: async (ctx, { jobId, rowIndex, status, error, productId, outputRow }) => {
+  handler: async (ctx, { jobId, rowIndex, status, error, productId, outputRow, llmProvider, llmModel }) => {
     const job = await ctx.db.get(jobId);
     if (!job) return;
     const rows = job.rows.map((row, i) =>
@@ -127,13 +129,17 @@ export const updateRow = internalMutation({
     );
     const processedRows = rows.filter((r) => r.status === "completed").length;
     const failedRows = rows.filter((r) => r.status === "failed").length;
-    await ctx.db.patch(jobId, {
+    const patch: Record<string, unknown> = {
       rows,
       processedRows,
       failedRows,
       currentRow: rowIndex,
       updatedAt: Date.now(),
-    });
+    };
+    // Store provider/model from the first successful API call.
+    if (llmProvider && !job.llmProvider) patch.llmProvider = llmProvider;
+    if (llmModel && !job.llmModel) patch.llmModel = llmModel;
+    await ctx.db.patch(jobId, patch as never);
   },
 });
 
@@ -224,7 +230,7 @@ export const processBatch = action({
       });
 
       try {
-        const { content } = await callLlmForJson(
+        const { content, model, provider } = await callLlmForJson(
           getAiSystemPrompt(),
           buildUserPrompt(row.rawText),
         );
@@ -293,6 +299,8 @@ export const processBatch = action({
           error: null,
           productId,
           outputRow: null,
+          llmProvider: provider,
+          llmModel: model,
         });
       } catch (error) {
         const diagnostic = formatError(error);
@@ -346,7 +354,7 @@ export const retryFailed = action({
       });
 
       try {
-        const { content } = await callLlmForJson(
+        const { content, model, provider } = await callLlmForJson(
           getAiSystemPrompt(),
           buildUserPrompt(row.rawText),
         );
@@ -415,6 +423,8 @@ export const retryFailed = action({
           error: null,
           productId,
           outputRow: null,
+          llmProvider: provider,
+          llmModel: model,
         });
       } catch (error) {
         const diagnostic = formatError(error);

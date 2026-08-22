@@ -144,6 +144,11 @@ export default function BatchDetail() {
             <p className="mt-1 text-sm text-zinc-500">
               {job.inputHeaders.length} input columns · Started {new Date(job.createdAt).toLocaleString()}
             </p>
+            {job.llmProvider && (
+              <p className="mt-1 text-[12px] font-medium text-zinc-600 bg-zinc-100 inline-block rounded px-2 py-0.5">
+                Provider: {job.llmProvider === "groq" ? "Groq" : "Gemini"} · Model: {job.llmModel ?? "default"}
+              </p>
+            )}
             {job.sourceTotalRows > job.totalRows && (
               <p className="mt-1 text-[12px] font-medium text-amber-700 bg-amber-50 inline-block rounded px-2 py-0.5">
                 Testing {job.selectedRows} of {job.sourceTotalRows} products
