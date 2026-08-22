@@ -52,6 +52,12 @@ function averageConfidence(product: Product): number {
       values.push(entry.confidence);
     }
   }
+  // Include dynamic specs in the average.
+  for (const entry of Object.values(product.otherSpecsMetadata ?? {})) {
+    if (entry && entry.source !== "unknown" && entry.confidence > 0) {
+      values.push(entry.confidence);
+    }
+  }
   return values.length
     ? Math.round(values.reduce((a, b) => a + b, 0) / values.length)
     : 0;
@@ -139,7 +145,15 @@ export default function ProductDetail() {
   }
 
   const confidence = averageConfidence(product);
-  const { validationFlags, qualityScore, specs, fieldMetadata } = product;
+  const { validationFlags, qualityScore, specs, fieldMetadata, otherSpecsMetadata } = product;
+
+  // Filter normalized_* keys from otherSpecs display.
+  const dynamicSpecEntries = Object.entries(specs.otherSpecs).filter(
+    ([key]) => !key.startsWith("normalized_"),
+  );
+
+  // Total field count for the evidence table: core + dynamic.
+  const totalFieldCount = FIELD_KEYS.length + dynamicSpecEntries.length;
 
   return (
     <div className="space-y-6">
@@ -191,7 +205,7 @@ export default function ProductDetail() {
                 <ConfidenceBar confidence={confidence} />
               </div>
               <p className="mt-1.5 text-[11px] text-zinc-400">
-                Across {FIELD_KEYS.length} classified fields
+                Across {totalFieldCount} classified fields
               </p>
             </div>
           </div>
@@ -258,20 +272,39 @@ export default function ProductDetail() {
             />
           </div>
 
-          {Object.keys(specs.otherSpecs).filter(
-            (key) => !key.startsWith("normalized_"),
-          ).length > 0 && (
+          {dynamicSpecEntries.length > 0 && (
             <div className="rounded-2xl border bg-card p-5 shadow-sm">
               <h2 className="text-sm font-semibold text-zinc-900">Other specifications</h2>
-              <div className="mt-4 grid gap-x-8 gap-y-2.5 sm:grid-cols-2">
-                {Object.entries(specs.otherSpecs)
-                  .filter(([key]) => !key.startsWith("normalized_"))
-                  .map(([key, value]) => (
-                    <div key={key} className="flex items-baseline justify-between gap-4 border-b border-zinc-100 pb-2">
-                      <span className="text-[13px] text-zinc-500">{key.replace(/_/g, " ")}</span>
-                      <span className="text-right text-[13px] font-medium text-zinc-800">{value}</span>
+              <p className="mt-1 text-[12px] text-zinc-500">
+                Every dynamic specification carries the same provenance contract as core fields.
+              </p>
+              <div className="mt-4 space-y-3">
+                {dynamicSpecEntries.map(([key, value]) => {
+                  const meta = otherSpecsMetadata[key];
+                  return (
+                    <div
+                      key={key}
+                      className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="text-[13px] font-medium text-zinc-700">
+                          {key.replace(/_/g, " ")}
+                        </span>
+                        <span className="ml-2 text-[13px] text-zinc-900">{value}</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {meta ? (
+                          <>
+                            <SourceBadge source={meta.source} />
+                            <ConfidenceBar confidence={meta.confidence} />
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-zinc-400">No metadata</span>
+                        )}
+                      </div>
                     </div>
-                  ))}
+                  );
+                })}
               </div>
             </div>
           )}
@@ -334,6 +367,7 @@ export default function ProductDetail() {
                   </tr>
                 </thead>
                 <tbody>
+                  {/* Core fields */}
                   {FIELD_KEYS.map((key) => {
                     const entry = fieldMetadata[key];
                     const empty =
@@ -365,7 +399,7 @@ export default function ProductDetail() {
                         <td className="max-w-sm px-4 py-3.5">
                           {entry.sourceTextSnippet && (
                             <blockquote className="rounded-lg border-l-2 border-primary/40 bg-zinc-50 px-3 py-2 text-[12px] italic leading-relaxed text-zinc-600">
-                              “{entry.sourceTextSnippet}”
+                              "{entry.sourceTextSnippet}"
                             </blockquote>
                           )}
                           {entry.explanation && (
@@ -374,6 +408,54 @@ export default function ProductDetail() {
                             </p>
                           )}
                           {!entry.sourceTextSnippet && !entry.explanation && (
+                            <span className="text-[12px] text-zinc-400">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {/* Dynamic otherSpecs fields */}
+                  {dynamicSpecEntries.map(([key, value]) => {
+                    const meta = otherSpecsMetadata[key];
+                    const hasMeta = !!meta;
+                    const isUnknown = !hasMeta || meta.source === "unknown";
+                    return (
+                      <tr
+                        key={`spec:${key}`}
+                        className="border-b border-zinc-100 align-top last:border-0"
+                      >
+                        <td className="px-5 py-3.5 text-[13px] font-medium text-zinc-700">
+                          {key.replace(/_/g, " ")}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {isUnknown && !value ? (
+                            <span className="text-[13px] italic text-zinc-400">
+                              Not determined — returned as unknown rather than guessed
+                            </span>
+                          ) : (
+                            <span className="text-[13px] font-medium text-zinc-900">
+                              {value || "—"}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <SourceBadge source={hasMeta ? meta.source : "unknown"} />
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <ConfidenceBar confidence={hasMeta ? meta.confidence : 0} />
+                        </td>
+                        <td className="max-w-sm px-4 py-3.5">
+                          {hasMeta && meta.sourceTextSnippet && (
+                            <blockquote className="rounded-lg border-l-2 border-primary/40 bg-zinc-50 px-3 py-2 text-[12px] italic leading-relaxed text-zinc-600">
+                              "{meta.sourceTextSnippet}"
+                            </blockquote>
+                          )}
+                          {hasMeta && meta.explanation && (
+                            <p className="mt-1.5 text-[12px] leading-relaxed text-zinc-500">
+                              {meta.explanation}
+                            </p>
+                          )}
+                          {!hasMeta && (
                             <span className="text-[12px] text-zinc-400">—</span>
                           )}
                         </td>
@@ -471,9 +553,7 @@ export default function ProductDetail() {
                     ] as [string, string | null][]
                   )
                     .concat(
-                      Object.entries(specs.otherSpecs).filter(
-                        ([key]) => !key.startsWith("normalized_"),
-                      ) as [string, string][],
+                      dynamicSpecEntries as [string, string][],
                     )
                     .map(([label, value]) => (
                       <div key={label} className="flex items-baseline justify-between gap-4 border-b border-zinc-100 pb-2">

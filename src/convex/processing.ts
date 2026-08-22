@@ -15,6 +15,9 @@
  * zod schema before anything is saved. On any failure the job is marked
  * "failed" with a visible error code and message — the live flow never falls
  * back to fake or hardcoded results.
+ *
+ * Security: mutations verify the caller's identity. The process action uses
+ * a server-side claim mechanism to prevent double-processing.
  */
 import { v, ConvexError } from "convex/values";
 import { action, internalMutation, mutation, query } from "./_generated/server";
@@ -30,7 +33,7 @@ import {
   llmResponseSchema,
   verifySnippets,
 } from "./aiPrompt";
-import { finalizeProduct } from "./scoring";
+import { buildOtherSpecsMetadata, finalizeProduct } from "./scoring";
 
 // ---------------------------------------------------------------------------
 // Job lifecycle
@@ -40,6 +43,12 @@ import { finalizeProduct } from "./scoring";
 export const start = mutation({
   args: { rawInputText: v.string(), inputName: v.string() },
   handler: async (ctx, { rawInputText, inputName }) => {
+    // Verify the caller is authenticated.
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("You must be signed in to process products.");
+    }
+
     const text = rawInputText.trim();
     if (!text) {
       throw new ConvexError({
@@ -81,8 +90,20 @@ export const get = query({
 export const retry = mutation({
   args: { jobId: v.id("processingJobs") },
   handler: async (ctx, { jobId }) => {
+    // Verify the caller is authenticated.
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new ConvexError("You must be signed in to retry processing.");
+    }
+
     const job = await ctx.db.get(jobId);
     if (!job) throw new ConvexError("Processing job not found.");
+
+    // Only failed jobs can be retried.
+    if (job.status !== "failed") {
+      throw new ConvexError("Only failed jobs can be retried.");
+    }
+
     const now = Date.now();
     await ctx.db.patch(jobId, {
       status: "processing",
@@ -171,6 +192,33 @@ export const fail = internalMutation({
   },
 });
 
+/** Server-side claim: atomically transition a job from processing (stage 0
+ *  pending) to "claimed". Returns true if this call won the race. */
+export const claimJob = internalMutation({
+  args: { jobId: v.id("processingJobs") },
+  handler: async (ctx, { jobId }) => {
+    const job = await ctx.db.get(jobId);
+    if (!job) return false;
+    // Only claimable when: status=processing, stage 0 is pending, and no
+    // prior claim has started the pipeline.
+    if (job.status !== "processing") return false;
+    if (job.currentStage !== 0) return false;
+    if (job.stages[0]?.status !== "pending") return false;
+    // Atomically mark stage 0 as "running" to claim the job.
+    const stages = job.stages.map((stage, i) =>
+      i === 0
+        ? { ...stage, status: "running" as const, detail: "Claimed by pipeline" }
+        : stage,
+    );
+    await ctx.db.patch(jobId, {
+      stages,
+      currentStage: 0,
+      updatedAt: Date.now(),
+    });
+    return true;
+  },
+});
+
 export const insertProduct = internalMutation({
   args: {
     rawInputText: v.string(),
@@ -183,6 +231,7 @@ export const insertProduct = internalMutation({
     descriptionDetailed: v.string(),
     searchKeywords: v.array(v.string()),
     fieldMetadata: v.any(),
+    otherSpecsMetadata: v.any(),
     validationFlags: v.any(),
     qualityScore: v.any(),
     status: v.string(),
@@ -197,8 +246,6 @@ export const insertProduct = internalMutation({
 // ---------------------------------------------------------------------------
 // The pipeline action
 // ---------------------------------------------------------------------------
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function describeFlags(product: FinalizedProduct): string {
   const { validationFlags } = product;
@@ -222,11 +269,18 @@ function describeFlags(product: FinalizedProduct): string {
 export const process = action({
   args: { jobId: v.id("processingJobs") },
   handler: async (ctx, { jobId }) => {
+    // --- Claim the job (server-side double-processing prevention) ----------
+    const claimed = await ctx.runMutation(internal.processing.claimJob, {
+      jobId,
+    });
+    if (!claimed) {
+      // Another invocation already claimed this job — exit cleanly.
+      return;
+    }
+
+    // Re-read the job after claiming to get the updated state.
     const job = await ctx.runQuery(api.processing.get, { jobId });
     if (!job) throw new ConvexError("Processing job not found.");
-    // Guard against double invocation (StrictMode, retries, refresh).
-    if (job.status !== "processing") return;
-    if (job.currentStage !== 0 || job.stages[0]?.status !== "pending") return;
 
     const setStage = (index: number, status: string, detail: string | null) =>
       ctx.runMutation(internal.processing.setStage, {
@@ -270,15 +324,33 @@ export const process = action({
         "running",
         "Classifying each field as original, inferred, generated, or unknown",
       );
+
+      // Build core field metadata with deterministic rules.
       const metadata = verifySnippets(
         buildFieldMetadata(parsed),
         job.rawInputText,
       );
-      await sleep(600);
+
+      // Build otherSpecs metadata deterministically — every dynamic spec
+      // gets provenance by checking against the source text.
+      const otherSpecsMeta = buildOtherSpecsMetadata(
+        parsed.otherSpecs,
+        job.rawInputText,
+        null,
+      );
+
+      // Count how many fields have been classified with evidence.
+      const classifiedCount = Object.values(metadata).filter(
+        (e) => e.source !== "unknown",
+      ).length;
+      const verifiedCount = Object.values(otherSpecsMeta).filter(
+        (e) => e.source !== "unknown",
+      ).length;
+
       await setStage(
         1,
         "done",
-        "Enriched attributes with source classification and confidence",
+        `Enriched ${classifiedCount} core fields + ${verifiedCount} dynamic specs with provenance`,
       );
 
       // --- Validate -------------------------------------------------------
@@ -310,11 +382,15 @@ export const process = action({
         descriptionDetailed: parsed.descriptionDetailed,
         searchKeywords: parsed.searchKeywords,
         fieldMetadata: metadata,
+        otherSpecsMetadata: otherSpecsMeta,
         extraFlags: { conflictingValues: conflicts },
         source: "ai_processed",
       });
-      await sleep(500);
-      await setStage(2, "done", `Validation complete: ${describeFlags(product)}`);
+      await setStage(
+        2,
+        "done",
+        `Validation complete: ${describeFlags(product)}`,
+      );
 
       // --- Commerce -------------------------------------------------------
       await setStage(
@@ -322,7 +398,6 @@ export const process = action({
         "running",
         "Assembling title, descriptions, and search keywords",
       );
-      await sleep(500);
       await setStage(
         3,
         "done",
@@ -335,7 +410,6 @@ export const process = action({
         "running",
         "Scoring completeness, evidence, consistency, validation, and commerce readiness",
       );
-      await sleep(500);
       await setStage(
         4,
         "done",
@@ -355,6 +429,7 @@ export const process = action({
         descriptionDetailed: product.descriptionDetailed,
         searchKeywords: product.searchKeywords,
         fieldMetadata: product.fieldMetadata,
+        otherSpecsMetadata: product.otherSpecsMetadata,
         validationFlags: product.validationFlags,
         qualityScore: product.qualityScore,
         status: product.status,

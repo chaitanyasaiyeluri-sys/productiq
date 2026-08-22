@@ -9,12 +9,15 @@
  *  - normalize dimensions/weight to metric internally
  *  - detect missing fields, conflicting values, suspicious values, and unit
  *    inconsistencies
+ *  - build deterministic provenance for dynamic otherSpecs
  *  - compute a transparent, factor-based Product Quality Score
  */
 import type {
   DimensionsSpec,
   FieldKey,
   FieldMetadata,
+  FieldMetadataEntry,
+  OtherSpecsMetadata,
   ProductSpecs,
   ProductStatus,
   QualityScore,
@@ -215,6 +218,60 @@ export function normalizeToMetric(specs: ProductSpecs): NormalizedMetrics {
 }
 
 // ---------------------------------------------------------------------------
+// Deterministic otherSpecs metadata builder
+// ---------------------------------------------------------------------------
+
+/**
+ * For every dynamic key in otherSpecs, deterministically assign provenance by
+ * checking whether the value (or its containing line) appears in the raw
+ * source text. This runs AFTER the LLM extraction and is never overridden
+ * by the model — it is purely server-side verification.
+ */
+export function buildOtherSpecsMetadata(
+  otherSpecs: Record<string, string>,
+  rawInputText: string,
+  sourceDocument: string | null,
+): OtherSpecsMetadata {
+  const result: OtherSpecsMetadata = {};
+  for (const [key, value] of Object.entries(otherSpecs)) {
+    if (!value || value.trim() === "") {
+      result[key] = {
+        value: null,
+        source: "unknown",
+        confidence: 0,
+        sourceTextSnippet: null,
+        sourceDocument,
+        explanation: null,
+      };
+      continue;
+    }
+    const snippet = findSnippet(value, rawInputText);
+    if (snippet) {
+      result[key] = {
+        value,
+        source: "original",
+        confidence: 90,
+        sourceTextSnippet: snippet,
+        sourceDocument,
+        explanation: "Directly stated in the supplied source text.",
+      };
+    } else {
+      // Value exists but could not be traced to the source — mark as
+      // unknown rather than allowing an unsupported specification.
+      result[key] = {
+        value: null,
+        source: "unknown",
+        confidence: 0,
+        sourceTextSnippet: null,
+        sourceDocument,
+        explanation: `The extracted value "${value}" for "${key.replace(/_/g, " ")}" could not be verified against the supplied source text.`,
+      };
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Validation flag detection
 // ---------------------------------------------------------------------------
 
@@ -222,6 +279,7 @@ export interface FlagDetectionInput {
   category: string | null;
   specs: ProductSpecs;
   fieldMetadata: FieldMetadata;
+  otherSpecsMetadata: OtherSpecsMetadata;
   descriptionShort: string | null;
   descriptionDetailed: string | null;
   searchKeywords: string[];
@@ -350,6 +408,17 @@ export function detectValidationFlags(input: FlagDetectionInput): ValidationFlag
     }
   }
 
+  // --- Unsupported dynamic specifications ---------------------------------
+  // Count otherSpecs entries that have a displayed value but unknown source
+  for (const [key, meta] of Object.entries(input.otherSpecsMetadata)) {
+    const displayValue = input.specs.otherSpecs[key];
+    if (displayValue && meta.source === "unknown") {
+      suspiciousValues.push(
+        `Specification "${key.replace(/_/g, " ")}" value "${displayValue}" could not be verified against the source.`,
+      );
+    }
+  }
+
   return { missingFields, conflictingValues, suspiciousValues, unitInconsistencies };
 }
 
@@ -359,6 +428,7 @@ export function detectValidationFlags(input: FlagDetectionInput): ValidationFlag
 
 export interface QualityScoreInput {
   fieldMetadata: FieldMetadata;
+  otherSpecsMetadata: OtherSpecsMetadata;
   flags: ValidationFlags;
   descriptionShort: string | null;
   descriptionDetailed: string | null;
@@ -379,7 +449,7 @@ const COMPLETENESS_WEIGHTS: Record<FieldKey, number> = {
 };
 
 export function computeQualityScore(input: QualityScoreInput): QualityScore {
-  const { fieldMetadata, flags } = input;
+  const { fieldMetadata, otherSpecsMetadata, flags } = input;
 
   // Completeness — weighted presence of the core fields.
   let completeness = 0;
@@ -396,8 +466,9 @@ export function computeQualityScore(input: QualityScoreInput): QualityScore {
   if (input.searchKeywords.length >= 1) completeness += 0.05;
   completeness = Math.round(completeness * 100);
 
-  // Evidence coverage — mean confidence across the field metadata.
-  const confidences = FIELD_KEYS.map((key) => {
+  // Evidence coverage — mean confidence across the field metadata,
+  // including dynamic otherSpecs.
+  const coreConfidences = FIELD_KEYS.map((key) => {
     const entry = fieldMetadata[key];
     const empty =
       entry.value === null ||
@@ -406,8 +477,19 @@ export function computeQualityScore(input: QualityScoreInput): QualityScore {
     if (empty || entry.source === "unknown") return 0;
     return entry.confidence;
   });
+
+  const otherConfidences = Object.values(otherSpecsMetadata).map((entry) => {
+    if (
+      entry.value === null ||
+      entry.source === "unknown"
+    )
+      return 0;
+    return entry.confidence;
+  });
+
+  const allConfidences = [...coreConfidences, ...otherConfidences];
   const evidenceCoverage = Math.round(
-    confidences.reduce((a, b) => a + b, 0) / Math.max(confidences.length, 1),
+    allConfidences.reduce((a, b) => a + b, 0) / Math.max(allConfidences.length, 1),
   );
 
   // Consistency — penalized by detected conflicts.
@@ -495,6 +577,7 @@ export interface FinalizeInput {
   descriptionDetailed: string | null;
   searchKeywords: string[];
   fieldMetadata: FieldMetadata;
+  otherSpecsMetadata: OtherSpecsMetadata;
   extraFlags?: Partial<ValidationFlags>;
   source: "seeded" | "ai_processed";
 }
@@ -510,6 +593,7 @@ export interface FinalizedProduct {
   descriptionDetailed: string;
   searchKeywords: string[];
   fieldMetadata: FieldMetadata;
+  otherSpecsMetadata: OtherSpecsMetadata;
   validationFlags: ValidationFlags;
   qualityScore: QualityScore;
   status: ProductStatus;
@@ -536,6 +620,7 @@ export function finalizeProduct(input: FinalizeInput): FinalizedProduct {
     category: input.category,
     specs,
     fieldMetadata: input.fieldMetadata,
+    otherSpecsMetadata: input.otherSpecsMetadata,
     descriptionShort: input.descriptionShort,
     descriptionDetailed: input.descriptionDetailed,
     searchKeywords: input.searchKeywords,
@@ -570,6 +655,7 @@ export function finalizeProduct(input: FinalizeInput): FinalizedProduct {
 
   const qualityScore = computeQualityScore({
     fieldMetadata: input.fieldMetadata,
+    otherSpecsMetadata: input.otherSpecsMetadata,
     flags: validationFlags,
     descriptionShort: input.descriptionShort,
     descriptionDetailed: input.descriptionDetailed,
@@ -597,6 +683,7 @@ export function finalizeProduct(input: FinalizeInput): FinalizedProduct {
     descriptionDetailed: input.descriptionDetailed ?? "",
     searchKeywords: input.searchKeywords,
     fieldMetadata: input.fieldMetadata,
+    otherSpecsMetadata: input.otherSpecsMetadata,
     validationFlags,
     qualityScore,
     status,

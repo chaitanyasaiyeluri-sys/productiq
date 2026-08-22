@@ -29,51 +29,51 @@ const PIPELINE_STEPS = [
   {
     icon: ScanSearch,
     title: "Extract",
-    text: "Parse raw input — pasted text or CSV — into candidate attributes with verbatim source snippets.",
+    text: "Find product information and evidence in raw input.",
   },
   {
     icon: FileSearch,
     title: "Enrich",
-    text: "Classify every field as original, AI-inferred, AI-generated, or unknown, with a confidence score.",
+    text: "Classify fields, normalize values, and identify supported inferences.",
   },
   {
     icon: ShieldCheck,
     title: "Validate",
-    text: "Detect missing fields, conflicting values, suspicious values, and unit inconsistencies.",
+    text: "Check missing fields, conflicts, suspicious values, and inconsistent units.",
   },
   {
     icon: Store,
     title: "Commerce",
-    text: "Generate a title, short and detailed descriptions, and search keywords ready for a catalog.",
+    text: "Create catalog-ready titles, descriptions, and search keywords.",
   },
   {
     icon: Gauge,
     title: "Score",
-    text: "A transparent 0–100 Product Quality Score from completeness, evidence, and consistency.",
+    text: "Calculate an explainable Product Quality Score.",
   },
   {
     icon: CheckCircle2,
     title: "Save",
-    text: "The validated, explainable record lands in the catalog — no malformed data, ever.",
+    text: "Store only validated, traceable product records.",
   },
 ];
 
 const RULES = [
   {
     title: "Never invent technical specifications",
-    text: "When the source does not support a value, ProductIQ marks it unknown instead of filling the gap with an assumption.",
+    text: "When the source does not support a technical value, ProductIQ marks it Unknown instead of guessing.",
   },
   {
-    title: "Every field has a source",
-    text: "Each value is labeled as original, inferred, generated, or unknown, with a confidence score.",
+    title: "Evidence before confidence",
+    text: "Every technical value carries provenance, confidence, and supporting evidence.",
   },
   {
-    title: "Evidence over assumptions",
-    text: "Original values retain their source evidence so users can understand where the information came from.",
+    title: "Validation beyond the model",
+    text: "ProductIQ independently checks units, missing fields, conflicts, and suspicious values instead of blindly trusting AI output.",
   },
   {
     title: "Quality you can measure",
-    text: "Product quality is scored using completeness, evidence, consistency, validation, and catalog readiness.",
+    text: "A deterministic Product Quality Score combines completeness, evidence, consistency, validation, and commerce readiness.",
   },
 ];
 
@@ -133,8 +133,8 @@ function MockProductCard() {
         </div>
       </div>
       <blockquote className="mt-4 rounded-lg border-l-2 border-sky-400/50 bg-white/[0.04] px-3 py-2 text-[12px] italic leading-relaxed text-white/60">
-        “Bore 25 mm, outside diameter 52 mm, width 15 mm. Chrome steel rings and
-        balls. Static load rating 7.8 kN.”
+        "Bore 25 mm, outside diameter 52 mm, width 15 mm. Chrome steel rings and
+        balls. Static load rating 7.8 kN."
       </blockquote>
       <div className="mt-4 flex items-center gap-2 rounded-lg bg-emerald-400/10 px-3 py-2 text-[12px] text-emerald-300">
         <CheckCircle2 className="size-3.5 shrink-0" />
@@ -171,7 +171,7 @@ export default function Landing() {
     ? [
         { value: String(stats.total), label: "Products in demo catalog" },
         { value: String(stats.categoryCount), label: "Industrial categories" },
-        { value: `${stats.fieldsClassifiedPct}%`, label: "Fields classified" },
+        { value: `${stats.fieldsClassifiedPct}%`, label: "Core fields classified" },
         { value: String(stats.unsupportedSpecs), label: "Unsupported specifications" },
       ]
     : null;
@@ -248,7 +248,7 @@ export default function Landing() {
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
               <span className="inline-flex items-center gap-2 rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1 text-[12px] font-medium text-sky-300">
                 <span className="size-1.5 rounded-full bg-sky-400" />
-                AI-powered product intelligence for industrial commerce
+                Live AI product intelligence
               </span>
               <h1 className="mt-6 text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl lg:text-[3.4rem]">
                 Turn scattered product data into a catalog{" "}
@@ -257,7 +257,7 @@ export default function Landing() {
               <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-white/60">
                 ProductIQ transforms raw product data from text, spreadsheets, and
                 supplier documents into structured, validated, catalog-ready records.
-                Every field is traceable to its source, scored for confidence, and
+                Every core field is traceable to its source, scored for confidence, and
                 checked for inconsistencies before it reaches your catalog.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
@@ -315,13 +315,12 @@ export default function Landing() {
             </span>
           </div>
           <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-            From raw text to a catalog-ready record in six stages
+            From raw product data to a trusted catalog record
           </h2>
           <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
-            Real-time extraction, validation, provenance tracking, and quality scoring.
-            The live workflow runs a real Gemini call under a strict structured-output
-            contract — every stage is visible, and malformed output is rejected instead
-            of saved.
+            ProductIQ combines Gemini-powered extraction with deterministic validation
+            and scoring to turn messy product information into structured, explainable
+            catalog data.
           </p>
         </motion.div>
         <div className="mt-12 grid gap-px overflow-hidden rounded-2xl border bg-zinc-200/70 sm:grid-cols-2 lg:grid-cols-3">
@@ -358,9 +357,9 @@ export default function Landing() {
               AI built to show its work
             </h2>
             <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
-              ProductIQ does not treat AI output as fact. Every field is classified by
-              its origin, backed by available evidence, and checked for conflicts before
-              it becomes part of the catalog.
+              ProductIQ does not treat AI output as fact. Every technical value must be
+              supported by evidence, every field has a clear provenance state, and every
+              record is checked before it becomes catalog-ready.
             </p>
           </motion.div>
           <div className="mt-12 grid gap-5 sm:grid-cols-2">
@@ -393,9 +392,9 @@ export default function Landing() {
               Find the problems hidden in your catalog
             </h2>
             <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
-              Product data often looks complete until it is checked. ProductIQ detects
-              missing fields, conflicting values, inconsistent units, and suspicious
-              specifications before they reach customers.
+              Product data can look complete while hiding missing fields, conflicting
+              values, inconsistent units, and suspicious specifications. ProductIQ
+              surfaces these issues before they become catalog problems.
             </p>
             <div className="mt-6 flex items-center gap-2 text-[13px] text-zinc-500">
               <Circle className="size-3.5 text-zinc-400" />
@@ -473,7 +472,7 @@ export default function Landing() {
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-white/55">
               Add a product or paste your source data and watch ProductIQ extract,
-              validate, score, and prepare it for your catalog.
+              verify, validate, score, and prepare it for your catalog.
             </p>
             <Link
               to={runHref}

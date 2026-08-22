@@ -16,6 +16,28 @@ export const roleValidator = v.union(
 );
 export type Role = Infer<typeof roleValidator>;
 
+/** Reusable field-metadata entry validator — one consistent shape used by
+ *  core fieldMetadata, dynamic otherSpecsMetadata, and evidence views. */
+const fieldMetadataEntryValidator = v.object({
+  value: v.union(
+    v.string(),
+    v.number(),
+    v.array(v.string()),
+    v.boolean(),
+    v.null(),
+  ),
+  source: v.union(
+    v.literal("original"),
+    v.literal("ai_generated"),
+    v.literal("ai_inferred"),
+    v.literal("unknown"),
+  ),
+  confidence: v.number(),
+  sourceTextSnippet: v.union(v.string(), v.null()),
+  sourceDocument: v.union(v.string(), v.null()),
+  explanation: v.union(v.string(), v.null()),
+});
+
 const schema = defineSchema(
   {
     // default auth tables using convex auth.
@@ -63,28 +85,11 @@ const schema = defineSchema(
       descriptionShort: v.string(),
       descriptionDetailed: v.string(),
       searchKeywords: v.array(v.string()),
-      fieldMetadata: v.record(
-        v.string(),
-        v.object({
-          value: v.union(
-            v.string(),
-            v.number(),
-            v.array(v.string()),
-            v.boolean(),
-            v.null(),
-          ),
-          source: v.union(
-            v.literal("original"),
-            v.literal("ai_generated"),
-            v.literal("ai_inferred"),
-            v.literal("unknown"),
-          ),
-          confidence: v.number(),
-          sourceTextSnippet: v.union(v.string(), v.null()),
-          sourceDocument: v.union(v.string(), v.null()),
-          explanation: v.union(v.string(), v.null()),
-        }),
-      ),
+      fieldMetadata: v.record(v.string(), fieldMetadataEntryValidator),
+      /** Per-key provenance for every dynamic specification in specs.otherSpecs.
+       *  Same contract as fieldMetadata — every technical value must have
+       *  source, confidence, and evidence or be marked unknown. */
+      otherSpecsMetadata: v.record(v.string(), fieldMetadataEntryValidator),
       validationFlags: v.object({
         missingFields: v.array(v.string()),
         conflictingValues: v.array(v.string()),

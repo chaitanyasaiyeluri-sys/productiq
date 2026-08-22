@@ -24,7 +24,7 @@ export type SourceKind = (typeof SOURCE_KINDS)[number];
 
 export interface FieldMetadataEntry {
   /** Display value for the field (null when the value could not be determined). */
-  value: string | number | string[] | null;
+  value: string | number | string[] | boolean | null;
   source: SourceKind;
   /** 0–100 confidence that the value is correct. */
   confidence: number;
@@ -51,6 +51,11 @@ export type FieldKey = (typeof FIELD_KEYS)[number];
 
 /** One consistent field_metadata object across the whole application. */
 export type FieldMetadata = Record<FieldKey, FieldMetadataEntry>;
+
+/** Dynamic technical specifications carry the same provenance contract as
+ *  core fields — every value must have source, confidence, and evidence,
+ *  or be marked unknown. */
+export type OtherSpecsMetadata = Record<string, FieldMetadataEntry>;
 
 export interface DimensionsSpec {
   length: number | null;
@@ -111,6 +116,7 @@ export interface Product {
   descriptionDetailed: string;
   searchKeywords: string[];
   fieldMetadata: FieldMetadata;
+  otherSpecsMetadata: OtherSpecsMetadata;
   validationFlags: ValidationFlags;
   qualityScore: QualityScore;
   status: ProductStatus;

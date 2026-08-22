@@ -6,15 +6,18 @@
  * quality scores behave identically across the whole catalog.
  */
 import { v } from "convex/values";
+import { ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type {
   FieldKey,
   FieldMetadata,
   FieldMetadataEntry,
+  OtherSpecsMetadata,
   SourceKind,
 } from "./types";
 import { FIELD_KEYS } from "./types";
 import {
+  buildOtherSpecsMetadata,
   findSnippet,
   finalizeProduct,
   formatDimensions,
@@ -172,6 +175,97 @@ export const get = query({
   },
 });
 
+/**
+ * Count the number of truly unsupported specifications across a product.
+ *
+ * A technical specification is "unsupported" if ANY of these are true:
+ *  1. It has a value but source is "unknown"
+ *  2. It claims "original" but has no valid source snippet
+ *  3. It claims "ai_inferred" but lacks evidence (no snippet + no explanation)
+ *  4. It contains a technical value classified as "ai_generated"
+ *  5. Its evidence snippet does not occur in the original source
+ *  6. Its provenance metadata is malformed (missing required fields)
+ */
+function countUnsupportedSpecs(
+  product: {
+    fieldMetadata: Record<string, FieldMetadataEntry>;
+    otherSpecsMetadata: Record<string, FieldMetadataEntry>;
+    rawInputText: string;
+  },
+): number {
+  let count = 0;
+  const normalizedRaw = product.rawInputText
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const isTechnicalKey = (key: string): boolean =>
+    [
+      "material",
+      "dimensions",
+      "weight",
+      "voltageRating",
+      "certifications",
+    ].includes(key);
+
+  const check = (key: string, entry: FieldMetadataEntry | undefined) => {
+    if (!entry) return;
+
+    // Skip empty / unknown — those are not "unsupported" (they are honest).
+    const empty =
+      entry.value === null ||
+      (typeof entry.value === "string" && entry.value.trim() === "") ||
+      (Array.isArray(entry.value) && entry.value.length === 0);
+    if (empty || entry.source === "unknown") return;
+
+    // Check 1: technical value without evidence
+    const hasEvidence =
+      (entry.sourceTextSnippet && entry.sourceTextSnippet.trim() !== "") ||
+      (entry.explanation && entry.explanation.trim() !== "");
+
+    // Check 2: ai_generated on a technical key
+    if (isTechnicalKey(key) && entry.source === "ai_generated") {
+      count++;
+      return;
+    }
+
+    // Check 3: original without valid snippet
+    if (entry.source === "original" && !entry.sourceTextSnippet) {
+      count++;
+      return;
+    }
+
+    // Check 4: ai_inferred without evidence
+    if (entry.source === "ai_inferred" && !hasEvidence) {
+      count++;
+      return;
+    }
+
+    // Check 5: snippet does not exist in source
+    if (entry.sourceTextSnippet) {
+      const normalizedSnippet = entry.sourceTextSnippet
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!normalizedRaw.includes(normalizedSnippet)) {
+        count++;
+        return;
+      }
+    }
+  };
+
+  // Check core fields
+  for (const key of Object.keys(product.fieldMetadata)) {
+    check(key, product.fieldMetadata[key]);
+  }
+  // Check dynamic otherSpecs
+  for (const key of Object.keys(product.otherSpecsMetadata)) {
+    check(key, product.otherSpecsMetadata[key]);
+  }
+
+  return count;
+}
+
 /** Catalog-wide aggregates for the Dashboard and the public landing page. */
 export const stats = query({
   args: {},
@@ -194,18 +288,8 @@ export const stats = query({
     let classifiedFields = 0;
     let totalFields = 0;
 
-    // Technical specification fields that must never carry an unsupported
-    // value. A spec counts as "unsupported" when a value is present but its
-    // source classification is unknown — i.e. the supplied evidence did not
-    // support it. ProductIQ's pipeline and seed path both return null for
-    // these, so this number is 0 by construction — never invented.
-    const technicalKeys = [
-      "material",
-      "dimensions",
-      "weight",
-      "voltageRating",
-      "certifications",
-    ];
+    // Core field keys that count toward "fields classified" percentage.
+    const trackedCoreKeys = [...FIELD_KEYS];
 
     for (const product of products) {
       qualitySum += product.qualityScore.overall;
@@ -222,37 +306,29 @@ export const stats = query({
         product.source === "seeded"
           ? { ...sourceCounts, seeded: sourceCounts.seeded + 1 }
           : { ...sourceCounts, aiProcessed: sourceCounts.aiProcessed + 1 };
-      for (const key of FIELD_KEYS) {
-        const entry = product.fieldMetadata[key];
-        if (entry && entry.source !== "unknown" && entry.confidence > 0) {
-          confidences.push(entry.confidence);
-        }
-      }
-      for (const key of technicalKeys) {
-        const entry = product.fieldMetadata[key];
-        const hasValue =
-          entry &&
-          entry.value !== null &&
-          entry.value !== undefined &&
-          !(
-            typeof entry.value === "string" && entry.value.trim() === ""
-          ) &&
-          !(Array.isArray(entry.value) && entry.value.length === 0);
-        if (hasValue && entry.source === "unknown") {
-          unsupportedSpecs += 1;
-        }
-      }
-      for (const key of Object.keys(product.fieldMetadata)) {
+
+      // Unsupported specs — comprehensive calculation.
+      unsupportedSpecs += countUnsupportedSpecs(product);
+
+      // Field classification — count core fields + dynamic specs.
+      for (const key of trackedCoreKeys) {
         totalFields += 1;
         const entry = product.fieldMetadata[key];
-        if (
-          entry &&
-          (entry.source === "original" ||
-            entry.source === "ai_generated" ||
-            entry.source === "ai_inferred" ||
-            entry.source === "unknown")
-        ) {
+        if (entry) {
+          classifiedFields += 1; // Always classified (even if unknown)
+          if (entry.source !== "unknown" && entry.confidence > 0) {
+            confidences.push(entry.confidence);
+          }
+        }
+      }
+      for (const key of Object.keys(product.otherSpecsMetadata)) {
+        totalFields += 1;
+        const entry = product.otherSpecsMetadata[key];
+        if (entry) {
           classifiedFields += 1;
+          if (entry.source !== "unknown" && entry.confidence > 0) {
+            confidences.push(entry.confidence);
+          }
         }
       }
     }
@@ -263,11 +339,6 @@ export const stats = query({
           confidences.reduce((a, b) => a + b, 0) / confidences.length,
         )
       : 0;
-
-    const recent = products
-      .slice()
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 8);
 
     return {
       total,
@@ -283,7 +354,6 @@ export const stats = query({
       unsupportedSpecs,
       flagCounts,
       sourceCounts,
-      recent,
     };
   },
 });
@@ -311,9 +381,19 @@ export const seed = mutation({
 
     let inserted = 0;
     for (const seedInput of SEED_PRODUCTS) {
+      const rawText = seedInput.raw;
+      const doc = seedInput.doc ?? "Product datasheet";
+
+      // Build otherSpecs metadata deterministically from the source text.
+      const otherSpecsMeta = buildOtherSpecsMetadata(
+        seedInput.otherSpecs ?? {},
+        rawText,
+        doc,
+      );
+
       const finalized = finalizeProduct({
-        rawInputText: seedInput.raw,
-        inputName: seedInput.doc ?? "Imported datasheet",
+        rawInputText: rawText,
+        inputName: doc,
         productName: seedInput.name,
         category: seedInput.category,
         subcategory: seedInput.subcategory ?? null,
@@ -329,6 +409,7 @@ export const seed = mutation({
         descriptionDetailed: seedInput.descriptionDetailed ?? null,
         searchKeywords: seedInput.keywords ?? [],
         fieldMetadata: buildSeedMetadata(seedInput),
+        otherSpecsMetadata: otherSpecsMeta,
         extraFlags: seedInput.extraFlags,
         source: "seeded",
       });
