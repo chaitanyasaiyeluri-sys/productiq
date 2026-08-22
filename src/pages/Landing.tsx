@@ -255,26 +255,26 @@ export default function Landing() {
                 <span className="text-sky-400">you can trust</span>.
               </h1>
               <p className="mt-5 max-w-xl text-[15px] leading-relaxed text-white/60">
-                ProductIQ transforms raw product data from text, spreadsheets, and
-                supplier documents into structured, validated, catalog-ready records.
-                Every core field is traceable to its source, scored for confidence, and
-                checked for inconsistencies before it reaches your catalog.
+                ProductIQ transforms sparse product information into structured, validated,
+                evidence-backed catalog data and exports it in the exact delivery format
+                your catalog requires. Every core field is traceable to its source, scored
+                for confidence, and checked for inconsistencies.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <Link
-                  to={runHref}
+                  to={isAuthenticated ? "/batch" : "/auth?returnTo=%2Fbatch"}
                   className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-xl shadow-primary/30 transition-all hover:bg-primary/90"
                 >
-                  Run a product through ProductIQ
+                  Upload Product Dataset
                   <ArrowRight className="size-4" />
                 </Link>
-                <a
-                  href="#pipeline"
+                <Link
+                  to={runHref}
                   className="inline-flex items-center gap-2 rounded-lg border border-white/15 px-5 py-2.5 text-sm font-medium text-white/80 transition-colors hover:border-white/30 hover:text-white"
                 >
-                  Explore the AI pipeline
+                  Try a Product
                   <ArrowRight className="size-4" />
-                </a>
+                </Link>
               </div>
               <dl className="mt-12 grid grid-cols-2 gap-x-8 gap-y-6 sm:grid-cols-4">
                 {metrics
@@ -313,9 +313,8 @@ export default function Landing() {
               <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
               Live AI pipeline
             </span>
-          </div>
-          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
-            From raw product data to a trusted catalog record
+          </div>            <h2 className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl">
+            From raw product data to delivery-ready catalog
           </h2>
           <p className="mt-4 text-[15px] leading-relaxed text-zinc-500">
             ProductIQ combines Gemini-powered extraction with deterministic validation
@@ -471,14 +470,14 @@ export default function Landing() {
               Turn raw product data into trusted product intelligence.
             </h2>
             <p className="mx-auto mt-4 max-w-xl text-[15px] leading-relaxed text-white/55">
-              Add a product or paste your source data and watch ProductIQ extract,
-              verify, validate, score, and prepare it for your catalog.
+              Upload a product dataset or paste source data and watch ProductIQ extract,
+              verify, validate, score, and export it in the exact format your catalog needs.
             </p>
             <Link
-              to={runHref}
+              to={isAuthenticated ? "/batch" : "/auth?returnTo=%2Fbatch"}
               className="mt-8 inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-xl shadow-primary/30 transition-colors hover:bg-primary/90"
             >
-              Run ProductIQ
+              Upload Product Dataset
               <ArrowRight className="size-4" />
             </Link>
           </motion.div>

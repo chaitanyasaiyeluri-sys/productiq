@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import { NavLink, Link, useLocation, useNavigate } from "react-router";
 import {
   ChevronDown,
+  FileSpreadsheet,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -78,6 +79,7 @@ function UserMenu() {
 
 const NAV_ITEMS = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/batch", label: "Batch Processing", icon: FileSpreadsheet },
   { to: "/add", label: "Add Product", icon: PlusCircle },
   { to: "/validation", label: "Validation Center", icon: ListChecks },
 ];

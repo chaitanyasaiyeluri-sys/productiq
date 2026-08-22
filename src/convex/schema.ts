@@ -140,6 +140,50 @@ const schema = defineSchema(
       createdAt: v.number(),
       updatedAt: v.number(),
     }).index("by_createdAt", ["createdAt"]),
+
+    /** The canonical delivery output schema, uploaded once from the official
+     *  Expected Output CSV. Stores exact header names, order, and count. */
+    deliverySchema: defineTable({
+      name: v.string(),
+      headers: v.array(v.string()),
+      headerCount: v.number(),
+      createdAt: v.number(),
+    }),
+
+    /** Batch processing jobs — one per uploaded dataset. Tracks per-row
+     *  processing status and output data for delivery. */
+    batchJobs: defineTable({
+      name: v.string(),
+      status: v.union(
+        v.literal("queued"),
+        v.literal("processing"),
+        v.literal("completed"),
+        v.literal("failed"),
+      ),
+      totalRows: v.number(),
+      processedRows: v.number(),
+      failedRows: v.number(),
+      currentRow: v.number(),
+      inputHeaders: v.array(v.string()),
+      rows: v.array(
+        v.object({
+          index: v.number(),
+          rawData: v.record(v.string(), v.string()),
+          rawText: v.string(),
+          status: v.union(
+            v.literal("queued"),
+            v.literal("processing"),
+            v.literal("completed"),
+            v.literal("failed"),
+          ),
+          error: v.union(v.string(), v.null()),
+          productId: v.union(v.id("products"), v.null()),
+          outputRow: v.union(v.record(v.string(), v.string()), v.null()),
+        }),
+      ),
+      createdAt: v.number(),
+      updatedAt: v.number(),
+    }).index("by_createdAt", ["createdAt"]),
   },
   {
     schemaValidation: false,

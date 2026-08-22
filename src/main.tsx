@@ -18,6 +18,8 @@ const AddProduct = lazy(() => import("./pages/AddProduct.tsx"));
 const Processing = lazy(() => import("./pages/Processing.tsx"));
 const ProductDetail = lazy(() => import("./pages/ProductDetail.tsx"));
 const ValidationCenter = lazy(() => import("./pages/ValidationCenter.tsx"));
+const BatchUpload = lazy(() => import("./pages/BatchUpload.tsx"));
+const BatchDetail = lazy(() => import("./pages/BatchDetail.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 
 // Simple loading fallback for route transitions
@@ -175,6 +177,26 @@ createRoot(document.getElementById("root")!).render(
                   <RequireAuth>
                     <AppShell>
                       <ValidationCenter />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/batch"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <BatchUpload />
+                    </AppShell>
+                  </RequireAuth>
+                }
+              />
+              <Route
+                path="/batch/:jobId"
+                element={
+                  <RequireAuth>
+                    <AppShell>
+                      <BatchDetail />
                     </AppShell>
                   </RequireAuth>
                 }
