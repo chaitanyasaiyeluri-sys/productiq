@@ -9,7 +9,9 @@ import { Link, useParams } from "react-router";
 import {
   AlertTriangle,
   ArrowLeft,
+  Bug,
   CheckCircle2,
+  ClipboardCopy,
   Download,
   FileSpreadsheet,
   FileText,
@@ -186,6 +188,11 @@ export default function BatchDetail() {
             </Button>
           </div>
         </div>
+      )}
+
+      {/* Failure Details */}
+      {job.failedRows > 0 && !isProcessing && (
+        <FailureDetails job={job} />
       )}
 
       {/* Progress bar */}
@@ -375,6 +382,147 @@ function MiniStat({ label, value, ok }: { label: string; value: string; ok: bool
       <div>
         <p className="text-[10px] uppercase tracking-wide text-zinc-400">{label}</p>
         <p className="text-[13px] font-medium text-zinc-800">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+/** Diagnostic section showing all failed rows with full error details. */
+function FailureDetails({ job }: { job: BatchJob }) {
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const failedRows = job.rows.filter((r) => r.status === "failed");
+  if (failedRows.length === 0) return null;
+
+  // Categorize errors by prefix pattern
+  const errorCategories: Record<string, number> = {};
+  for (const row of failedRows) {
+    const err = row.error ?? "unknown";
+    // Extract the [code] prefix if present
+    const codeMatch = err.match(/^\[(\w+)\]/);
+    const code = codeMatch ? codeMatch[1] : "unknown";
+    errorCategories[code] = (errorCategories[code] ?? 0) + 1;
+  }
+
+  const buildReport = (): string => {
+    const lines: string[] = [];
+    lines.push(`=== ProductIQ Batch Error Report ===`);
+    lines.push(`Job: ${job.name}`);
+    lines.push(`Total: ${job.totalRows} | Succeeded: ${job.processedRows} | Failed: ${job.failedRows}`);
+    lines.push(`Started: ${new Date(job.createdAt).toLocaleString()}`);
+    lines.push("");
+    lines.push("--- Error Summary ---");
+    for (const [code, count] of Object.entries(errorCategories)) {
+      lines.push(`  ${code}: ${count} row(s)`);
+    }
+    lines.push("");
+    lines.push("--- Failed Row Details ---");
+    for (const row of failedRows) {
+      lines.push("");
+      lines.push(`Row ${row.index + 1}:`);
+      // Show first column value as identifier
+      const firstKey = Object.keys(row.rawData)[0];
+      lines.push(`  Identifier: ${firstKey ? row.rawData[firstKey] : "N/A"}`);
+      lines.push(`  Error: ${row.error ?? "(no error stored)"}`);
+    }
+    return lines.join("\n");
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildReport());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: select text from a hidden textarea
+      const ta = document.createElement("textarea");
+      ta.value = buildReport();
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-rose-200 bg-rose-50/60 p-6 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Bug className="size-4 text-rose-600" />
+          <h2 className="text-sm font-semibold text-rose-900">
+            Failure Details — {failedRows.length} row{failedRows.length !== 1 ? "s" : ""}
+          </h2>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleCopy}
+            className="gap-1.5"
+          >
+            <ClipboardCopy className="size-3.5" />
+            {copied ? "Copied!" : "Copy Error Report"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setExpanded(!expanded)}
+          >
+            {expanded ? "Collapse" : "Expand"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Error category summary */}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {Object.entries(errorCategories).map(([code, count]) => (
+          <span
+            key={code}
+            className="rounded-full bg-rose-100 px-2.5 py-0.5 text-[11px] font-medium text-rose-700"
+          >
+            {code}: {count}
+          </span>
+        ))}
+      </div>
+
+      {/* Failed row list */}
+      <div className="mt-4 space-y-2">
+        {(expanded ? failedRows : failedRows.slice(0, 3)).map((row) => (
+          <div
+            key={row.index}
+            className="rounded-lg border border-rose-200 bg-white p-3"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] font-semibold text-zinc-900">
+                  Row {row.index + 1}
+                  {(() => {
+                    const firstKey = Object.keys(row.rawData)[0];
+                    return firstKey ? (
+                      <span className="ml-2 font-normal text-zinc-500">
+                        {row.rawData[firstKey]}
+                      </span>
+                    ) : null;
+                  })()}
+                </p>
+                <p className="mt-1 break-all text-[12px] leading-relaxed text-rose-700 font-mono">
+                  {row.error ?? "(no error stored)"}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+        {!expanded && failedRows.length > 3 && (
+          <button
+            onClick={() => setExpanded(true)}
+            className="w-full rounded-lg border border-dashed border-rose-200 py-2 text-[12px] text-rose-600 hover:bg-rose-50"
+          >
+            Show all {failedRows.length} failed rows
+          </button>
+        )}
       </div>
     </div>
   );

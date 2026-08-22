@@ -181,6 +181,21 @@ export const markFailed = internalMutation({
   },
 });
 
+/** Format an error into a diagnostic string that includes the error code,
+ * retriable flag, and the full message. No secrets are included. */
+function formatError(error: unknown): string {
+  if (error instanceof LlmError) {
+    const parts = [`[${error.code}]`];
+    if (error.retriable) parts.push("(retriable, retries exhausted)");
+    parts.push(error.message);
+    return parts.join(" ");
+  }
+  if (error instanceof Error) {
+    return `[${error.name}] ${error.message}`;
+  }
+  return String(error);
+}
+
 // ---------------------------------------------------------------------------
 // The batch processing action
 // ---------------------------------------------------------------------------
@@ -280,12 +295,12 @@ export const processBatch = action({
           outputRow: null,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const diagnostic = formatError(error);
         await ctx.runMutation(internal.batchJobs.updateRow, {
           jobId,
           rowIndex: i,
           status: "failed",
-          error: message,
+          error: diagnostic,
           productId: null,
           outputRow: null,
         });
@@ -402,12 +417,12 @@ export const retryFailed = action({
           outputRow: null,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const diagnostic = formatError(error);
         await ctx.runMutation(internal.batchJobs.updateRow, {
           jobId,
           rowIndex: i,
           status: "failed",
-          error: message,
+          error: diagnostic,
           productId: null,
           outputRow: null,
         });
