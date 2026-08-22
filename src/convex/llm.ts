@@ -24,8 +24,28 @@ export class LlmError extends Error {
 }
 
 const DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
-const DEFAULT_MODEL = "gemini-3.6-flash";
+const DEFAULT_MODEL = "gemini-3.7-flash";
 const DEFAULT_TIMEOUT_MS = 90_000;
+
+/**
+ * Available Gemini models suitable for ProductIQ (all support structured JSON
+ * and the Interactions API on the free tier):
+ *
+ *  - gemini-3.7-flash  — Latest, best reasoning + JSON fidelity (DEFAULT)
+ *  - gemini-3.6-flash  — Previous-gen, proven on this pipeline
+ *  - gemini-2.5-flash  — Reasoning-capable, lower cost
+ *
+ * Override via the LLM_MODEL env var in the Convex Keys UI.
+ */
+export const AVAILABLE_MODELS = [
+  { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+  { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+  { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+] as const;
+
+export function getDefaultModel(): string {
+  return DEFAULT_MODEL;
+}
 const MAX_RETRIES = 5;
 const BASE_DELAY_MS = 2_000;
 const MAX_DELAY_MS = 60_000;
