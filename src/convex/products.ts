@@ -307,13 +307,23 @@ export const stats = query({
           ? { ...sourceCounts, seeded: sourceCounts.seeded + 1 }
           : { ...sourceCounts, aiProcessed: sourceCounts.aiProcessed + 1 };
 
+      // Defensive: older products may lack otherSpecsMetadata.
+      const otherMeta =
+        ((product as Record<string, unknown>).otherSpecsMetadata as Record<string, FieldMetadataEntry> | undefined) ?? ({} as Record<string, FieldMetadataEntry>);
+      const fieldMeta =
+        ((product as Record<string, unknown>).fieldMetadata as Record<string, FieldMetadataEntry> | undefined) ?? ({} as Record<string, FieldMetadataEntry>);
+
       // Unsupported specs — comprehensive calculation.
-      unsupportedSpecs += countUnsupportedSpecs(product);
+      unsupportedSpecs += countUnsupportedSpecs({
+        fieldMetadata: fieldMeta,
+        otherSpecsMetadata: otherMeta,
+        rawInputText: product.rawInputText ?? "",
+      });
 
       // Field classification — count core fields + dynamic specs.
       for (const key of trackedCoreKeys) {
         totalFields += 1;
-        const entry = product.fieldMetadata[key];
+        const entry = fieldMeta[key];
         if (entry) {
           classifiedFields += 1; // Always classified (even if unknown)
           if (entry.source !== "unknown" && entry.confidence > 0) {
@@ -321,9 +331,9 @@ export const stats = query({
           }
         }
       }
-      for (const key of Object.keys(product.otherSpecsMetadata)) {
+      for (const key of Object.keys(otherMeta)) {
         totalFields += 1;
-        const entry = product.otherSpecsMetadata[key];
+        const entry = otherMeta[key];
         if (entry) {
           classifiedFields += 1;
           if (entry.source !== "unknown" && entry.confidence > 0) {
