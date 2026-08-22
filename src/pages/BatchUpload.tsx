@@ -133,6 +133,14 @@ export default function BatchUpload() {
   const [error, setError] = useState<string | null>(null);
   const [isUploadingSchema, setIsUploadingSchema] = useState(false);
   const [isCreatingJob, setIsCreatingJob] = useState(false);
+  const [batchSize, setBatchSize] = useState<10 | 25 | 100 | 0>(10);
+
+  const BATCH_OPTIONS: { label: string; value: 10 | 25 | 100 | 0 }[] = [
+    { label: "10 rows", value: 10 },
+    { label: "25 rows", value: 25 },
+    { label: "100 rows", value: 100 },
+    { label: "All rows", value: 0 },
+  ];
 
   // --- Schema upload ---
   const handleSchemaFile = (file: File | undefined | null) => {
@@ -258,10 +266,16 @@ export default function BatchUpload() {
     setIsCreatingJob(true);
     setError(null);
     try {
+      const sourceTotalRows = dataRows.length;
+      const selectedRows = batchSize === 0 ? dataRows.length : batchSize;
+      const rowsToSend = dataRows.slice(0, selectedRows);
+
       const jobId = await createBatch({
         name: dataName,
         inputHeaders: dataHeaders,
-        rows: dataRows,
+        rows: rowsToSend,
+        sourceTotalRows,
+        selectedRows: rowsToSend.length,
       });
       setDataPreview(false);
       setDataRows([]);
@@ -415,10 +429,39 @@ export default function BatchUpload() {
                 </tbody>
               </table>
             </div>
+            {/* Batch size selector */}
+            <div className="flex items-center gap-3">
+              <span className="text-[12px] font-medium text-zinc-600">Process:</span>
+              <div className="flex gap-1.5">
+                {BATCH_OPTIONS.map((opt) => {
+                  const count = opt.value === 0 ? dataRows.length : opt.value;
+                  const disabled = count > dataRows.length;
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => !disabled && setBatchSize(opt.value)}
+                      disabled={disabled}
+                      className={`rounded-lg border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                        batchSize === opt.value
+                          ? "border-primary bg-primary/10 text-primary"
+                          : disabled
+                            ? "border-zinc-200 bg-zinc-50 text-zinc-300 cursor-not-allowed"
+                            : "border-zinc-200 bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-[12px] text-zinc-500">
+              <span>Testing {batchSize === 0 ? dataRows.length : Math.min(batchSize, dataRows.length)} of {dataRows.length} products</span>
+            </div>
             <div className="flex gap-2">
               <Button onClick={() => void handleStartBatch()} disabled={isCreatingJob} className="gap-2">
                 {isCreatingJob ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                Start AI Processing ({dataRows.length} rows)
+                Start AI Processing
               </Button>
               <Button variant="outline" onClick={() => { setDataPreview(false); setDataRows([]); setDataHeaders([]); }}>
                 Cancel
@@ -465,6 +508,9 @@ export default function BatchUpload() {
                   <p className="text-[13px] font-medium text-zinc-900">{job.name}</p>
                   <p className="text-[12px] text-zinc-500">
                     {job.processedRows}/{job.totalRows} processed · {job.failedRows} failed
+                    {job.sourceTotalRows > job.totalRows && (
+                      <> · Dataset: {job.sourceTotalRows} rows</>
+                    )}
                   </p>
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${

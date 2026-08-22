@@ -55,8 +55,10 @@ export const create = mutation({
     name: v.string(),
     inputHeaders: v.array(v.string()),
     rows: v.array(v.record(v.string(), v.string())),
+    sourceTotalRows: v.number(),
+    selectedRows: v.number(),
   },
-  handler: async (ctx, { name, inputHeaders, rows }) => {
+  handler: async (ctx, { name, inputHeaders, rows, sourceTotalRows, selectedRows }) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new ConvexError("You must be signed in to create batch jobs.");
@@ -70,6 +72,8 @@ export const create = mutation({
       processedRows: 0,
       failedRows: 0,
       currentRow: 0,
+      sourceTotalRows,
+      selectedRows,
       inputHeaders,
       rows: rows.map((rawData, index) => ({
         index,

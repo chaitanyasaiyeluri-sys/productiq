@@ -142,6 +142,11 @@ export default function BatchDetail() {
             <p className="mt-1 text-sm text-zinc-500">
               {job.inputHeaders.length} input columns · Started {new Date(job.createdAt).toLocaleString()}
             </p>
+            {job.sourceTotalRows > job.totalRows && (
+              <p className="mt-1 text-[12px] font-medium text-amber-700 bg-amber-50 inline-block rounded px-2 py-0.5">
+                Testing {job.selectedRows} of {job.sourceTotalRows} products
+              </p>
+            )}
           </div>
         </div>
       </div>

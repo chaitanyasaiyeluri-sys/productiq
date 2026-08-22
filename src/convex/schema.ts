@@ -164,6 +164,10 @@ const schema = defineSchema(
       processedRows: v.number(),
       failedRows: v.number(),
       currentRow: v.number(),
+      /** Total rows in the uploaded source dataset (before any selection). */
+      sourceTotalRows: v.number(),
+      /** How many rows the user selected for processing (may be < sourceTotalRows). */
+      selectedRows: v.number(),
       inputHeaders: v.array(v.string()),
       rows: v.array(
         v.object({
