@@ -214,16 +214,10 @@ export default function Landing() {
           </nav>
           <div className="flex items-center gap-2.5">
             <Link
-              to={isAuthenticated ? "/dashboard" : "/auth"}
-              className="hidden rounded-lg px-3.5 py-2 text-[13px] font-medium text-white/70 transition-colors hover:text-white sm:block"
-            >
-              {isAuthenticated ? "Dashboard" : "Sign in"}
-            </Link>
-            <Link
-              to={demoHref}
+              to={isAuthenticated ? "/batch" : "/auth?returnTo=%2Fbatch"}
               className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground shadow-lg shadow-primary/25 transition-colors hover:bg-primary/90"
             >
-              {isAuthenticated ? "Dashboard" : "Open the demo"}
+              {isAuthenticated ? "Upload Dataset" : "Get Started"}
               <ArrowRight className="size-3.5" />
             </Link>
           </div>

@@ -154,6 +154,10 @@ const schema = defineSchema(
      *  processing status and output data for delivery. */
     batchJobs: defineTable({
       name: v.string(),
+      /** Owning Convex user ID — set server-side from the authenticated identity.
+       *  Both anonymous (demo) and signed-in users get a unique ID from
+       *  @convex-dev/auth, so we use the same field for both. */
+      userId: v.string(),
       status: v.union(
         v.literal("queued"),
         v.literal("processing"),
@@ -198,7 +202,8 @@ const schema = defineSchema(
       })),
       createdAt: v.number(),
       updatedAt: v.number(),
-    }).index("by_createdAt", ["createdAt"]),
+    }).index("by_createdAt", ["createdAt"])
+      .index("by_userId", ["userId"]),
   },
   {
     schemaValidation: false,

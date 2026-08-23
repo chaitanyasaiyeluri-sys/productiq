@@ -179,7 +179,8 @@ export default function Dashboard() {
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
             {stats.total} products · {Object.keys(stats.categoryDistribution).length} categories ·{" "}
-            {stats.sourceCounts.aiProcessed} processed live with AI
+            {stats.sourceCounts.aiProcessed} processed live with AI ·{' '}
+            {stats.sourceCounts.seeded} example products
           </p>
         </div>
         <Link
@@ -343,6 +344,18 @@ export default function Dashboard() {
           </Link>
         </div>
       </div>
+
+      {/* Sample Data label */}
+      {stats.sourceCounts.seeded > 0 && (
+        <div className="rounded-2xl border border-dashed border-sky-200 bg-sky-50/50 p-4">
+          <p className="text-[12px] font-medium text-sky-700">
+            Sample Data — {stats.sourceCounts.seeded} example products from the demo catalog
+          </p>
+          <p className="mt-0.5 text-[11px] text-sky-500">
+            These are read-only demonstration products. Your AI-processed products will appear in your batch jobs.
+          </p>
+        </div>
+      )}
 
       {/* Recent products */}
       <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">

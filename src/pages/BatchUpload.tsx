@@ -7,6 +7,7 @@
  * 4. Track progress with live status updates
  */
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -19,6 +20,7 @@ import {
   Loader2,
   Settings2,
   Sparkles,
+  Trash2,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -115,8 +117,9 @@ export default function BatchUpload() {
   const uploadSchema = useMutation(api.deliverySchema.upload);
   const clearSchema = useMutation(api.deliverySchema.clear);
   const createBatch = useMutation(api.batchJobs.create);
+  const deleteBatch = useMutation(api.batchJobs.deleteBatch);
   const processBatch = useAction(api.batchJobs.processBatch);
-  const batchJobs = useQuery(api.batchJobs.list);
+  const batchJobs = useQuery(api.batchJobs.listMy);
 
   const schemaInputRef = useRef<HTMLInputElement>(null);
   const dataInputRef = useRef<HTMLInputElement>(null);
@@ -134,6 +137,8 @@ export default function BatchUpload() {
   const [isUploadingSchema, setIsUploadingSchema] = useState(false);
   const [isCreatingJob, setIsCreatingJob] = useState(false);
   const [batchSize, setBatchSize] = useState<1 | 2 | 5 | 10 | 25 | 100 | 0>(1);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   const BATCH_OPTIONS: { label: string; value: 1 | 2 | 5 | 10 | 25 | 100 | 0 }[] = [
     { label: "1 row", value: 1 },
@@ -290,6 +295,19 @@ export default function BatchUpload() {
       setError(err instanceof Error ? err.message : "Failed to create batch job.");
     } finally {
       setIsCreatingJob(false);
+    }
+  };
+
+  // --- Delete batch ---
+  const handleDeleteBatch = async (jobId: Id<"batchJobs">) => {
+    setDeletingId(jobId);
+    setConfirmDeleteId(null);
+    try {
+      await deleteBatch({ jobId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete batch.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -496,18 +514,15 @@ export default function BatchUpload() {
         </p>
       )}
 
-      {/* Recent batch jobs */}
-      {batchJobs && batchJobs.length > 0 && (
-        <div className="rounded-2xl border bg-card p-6 shadow-sm">
-          <h2 className="text-sm font-semibold text-zinc-900">Recent batch jobs</h2>
+      {/* My batch jobs */}
+      <div className="rounded-2xl border bg-card p-6 shadow-sm">
+        <h2 className="text-sm font-semibold text-zinc-900">My Batch Jobs</h2>
+        <p className="text-[12px] text-zinc-500 mt-0.5">Only your own batches are shown.</p>
+        {batchJobs && batchJobs.length > 0 ? (
           <div className="mt-3 space-y-2">
-            {batchJobs.slice(0, 5).map((job) => (
-              <Link
-                key={job._id}
-                to={`/batch/${job._id}`}
-                className="flex items-center justify-between rounded-lg border px-4 py-3 transition-colors hover:bg-zinc-50"
-              >
-                <div>
+            {batchJobs.slice(0, 10).map((job) => (
+              <div key={job._id} className="flex items-center justify-between rounded-lg border px-4 py-3">
+                <Link to={`/batch/${job._id}`} className="flex-1 min-w-0 transition-colors hover:bg-zinc-50 rounded-lg -m-3 p-3">
                   <p className="text-[13px] font-medium text-zinc-900">{job.name}</p>
                   <p className="text-[12px] text-zinc-500">
                     {job.processedRows}/{job.totalRows} processed · {job.failedRows} failed
@@ -515,20 +530,47 @@ export default function BatchUpload() {
                       <> · Dataset: {job.sourceTotalRows} rows</>
                     )}
                   </p>
+                </Link>
+                <div className="flex items-center gap-2 ml-3">
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    job.status === "completed" ? "bg-emerald-50 text-emerald-700" :
+                    job.status === "processing" ? "bg-primary/10 text-primary" :
+                    job.status === "failed" ? "bg-rose-50 text-rose-700" :
+                    "bg-zinc-100 text-zinc-600"
+                  }`}>
+                    {job.status}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (confirmDeleteId === job._id) {
+                        void handleDeleteBatch(job._id as Id<"batchJobs">);
+                      } else {
+                        setConfirmDeleteId(job._id);
+                        setTimeout(() => setConfirmDeleteId(null), 3000);
+                      }
+                    }}
+                    disabled={deletingId === job._id || job.status === "processing"}
+                    className="rounded p-1.5 text-zinc-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                    title={confirmDeleteId === job._id ? "Click again to confirm" : "Delete batch"}
+                  >
+                    {deletingId === job._id ? (
+                      <Loader2 className="size-3.5 animate-spin" />
+                    ) : (
+                      <Trash2 className="size-3.5" />
+                    )}
+                  </button>
                 </div>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                  job.status === "completed" ? "bg-emerald-50 text-emerald-700" :
-                  job.status === "processing" ? "bg-primary/10 text-primary" :
-                  job.status === "failed" ? "bg-rose-50 text-rose-700" :
-                  "bg-zinc-100 text-zinc-600"
-                }`}>
-                  {job.status}
-                </span>
-              </Link>
+              </div>
             ))}
           </div>
-        </div>
-      )}
+        ) : (
+          <p className="mt-4 py-6 text-center text-[13px] text-zinc-400">
+            No batch jobs yet. Upload a dataset above to get started.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

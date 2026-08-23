@@ -3,7 +3,7 @@
  * delivery preview with header validation, and CSV/XLSX export.
  */
 import { api } from "@/convex/_generated/api";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import {
@@ -18,6 +18,7 @@ import {
   Loader2,
   RotateCw,
   ShieldCheck,
+  Trash2,
   XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -40,8 +41,24 @@ export default function BatchDetail() {
 
   // Fetch all products that were created by this batch
   const allProducts = useQuery(api.products.list);
+  const deleteBatch = useMutation(api.batchJobs.deleteBatch);
   const retryFailed = useAction(api.batchJobs.retryFailed);
   const [retrying, setRetrying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const handleDelete = async () => {
+    if (!jobId) return;
+    setDeleting(true);
+    try {
+      await deleteBatch({ jobId: jobId as never });
+      // Navigate back to batch list after deletion
+      window.location.href = "/batch";
+    } catch (e) {
+      console.error("Delete failed", e);
+      setDeleting(false);
+    }
+  };
 
   const handleRetry = async () => {
     if (!jobId) return;
@@ -144,6 +161,23 @@ export default function BatchDetail() {
             <p className="mt-1 text-sm text-zinc-500">
               {job.inputHeaders.length} input columns · Started {new Date(job.createdAt).toLocaleString()}
             </p>
+            <div className="mt-3 flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (confirmDelete) {
+                    void handleDelete();
+                  } else {
+                    setConfirmDelete(true);
+                    setTimeout(() => setConfirmDelete(false), 5000);
+                  }
+                }}
+                disabled={deleting || isProcessing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-[12px] font-medium text-rose-600 transition-colors hover:bg-rose-50 disabled:opacity-50"
+              >
+                {deleting ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                {confirmDelete ? "Confirm delete" : "Delete batch"}
+              </button>
+            </div>
             {job.llmProvider && (
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <p className="text-[12px] font-medium text-zinc-600 bg-zinc-100 inline-block rounded px-2 py-0.5">
